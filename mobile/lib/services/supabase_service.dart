@@ -4,6 +4,7 @@ import '../core/constants/supabase_constants.dart';
 import '../core/env/env.dart';
 import '../core/errors/app_exception.dart';
 import '../models/capsule_model.dart';
+import '../models/received_capsule_model.dart';
 import '../models/user_settings_model.dart';
 
 /// Thin, typed wrapper around the Supabase client. Every method here maps
@@ -136,6 +137,68 @@ class SupabaseService {
       return CapsuleModel.fromJson(list.first as Map<String, dynamic>);
     } catch (e) {
       throw CapsuleException('Could not find that memory.', cause: e);
+    }
+  }
+
+  /// Tracks a capsule the current user has resolved as a *recipient* — see
+  /// `received_capsules` migration for why fields are denormalized here
+  /// rather than joined. [encryptionKey] is omitted from the payload (not
+  /// sent as an explicit null) when unknown, so an `ON CONFLICT` upsert
+  /// never overwrites an already-known key with a missing one.
+  static Future<void> upsertReceivedCapsule({
+    required String userId,
+    required String capsuleId,
+    required String shareId,
+    required DateTime unlockTime,
+    required double latitude,
+    required double longitude,
+    String? encryptionKey,
+  }) async {
+    try {
+      final payload = <String, dynamic>{
+        'user_id': userId,
+        'capsule_id': capsuleId,
+        'share_id': shareId,
+        'unlock_time': unlockTime.toUtc().toIso8601String(),
+        'latitude': latitude,
+        'longitude': longitude,
+      };
+      if (encryptionKey != null) payload['encryption_key'] = encryptionKey;
+      await client
+          .from(SupabaseConstants.receivedCapsulesTable)
+          .upsert(payload, onConflict: 'user_id,capsule_id');
+    } catch (e) {
+      throw CapsuleException('Could not save this memory to your gallery.', cause: e);
+    }
+  }
+
+  static Future<void> markReceivedCapsuleViewed({
+    required String userId,
+    required String capsuleId,
+  }) async {
+    try {
+      await client
+          .from(SupabaseConstants.receivedCapsulesTable)
+          .update({'is_viewed': true})
+          .eq('user_id', userId)
+          .eq('capsule_id', capsuleId);
+    } catch (e) {
+      throw CapsuleException('Could not update your gallery.', cause: e);
+    }
+  }
+
+  static Future<List<ReceivedCapsuleModel>> fetchReceivedCapsules(String userId) async {
+    try {
+      final rows = await client
+          .from(SupabaseConstants.receivedCapsulesTable)
+          .select()
+          .eq('user_id', userId)
+          .order('first_seen_at', ascending: false);
+      return (rows as List)
+          .map((row) => ReceivedCapsuleModel.fromJson(row as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      throw CapsuleException('Could not load your gallery.', cause: e);
     }
   }
 }

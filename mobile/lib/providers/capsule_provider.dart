@@ -31,6 +31,7 @@ class CapsuleProvider extends ChangeNotifier {
 
   StreamSubscription<Position>? _positionSubscription;
   String? _pendingEncryptionKey;
+  String? _recipientUserId;
 
   /// The encryption key for [activeCapsule], if one has been loaded via
   /// [loadCapsuleForRadar]. Exposed for Sprint 3's "keep this memory
@@ -102,10 +103,14 @@ class CapsuleProvider extends ChangeNotifier {
   /// Sprint 2: resolves a share link into a capsule row, decrypting the
   /// metadata immediately if already unlocked (so callers can offer instant
   /// download) or storing the key for later once proximity/time conditions
-  /// are met.
+  /// are met. Also tracks the capsule into the recipient's Gallery
+  /// (`received_capsules`) — this happens for every resolved link,
+  /// regardless of unlock status, and works for anonymous accounts too
+  /// since it's keyed purely by `auth.uid()`.
   Future<void> loadCapsuleForRadar({
     required String shareId,
     required String encryptionKey,
+    required String recipientUserId,
   }) async {
     isLoadingRadar = true;
     radarPhase = RadarPhase.locating;
@@ -117,10 +122,21 @@ class CapsuleProvider extends ChangeNotifier {
       }
       activeCapsule = capsule;
       _pendingEncryptionKey = encryptionKey;
+      _recipientUserId = recipientUserId;
 
       await NotificationService.scheduleUnlockReminder(
         capsuleId: capsule.id,
         unlockTime: capsule.unlockTime,
+      );
+
+      await SupabaseService.upsertReceivedCapsule(
+        userId: recipientUserId,
+        capsuleId: capsule.id,
+        shareId: capsule.shareId,
+        unlockTime: capsule.unlockTime,
+        latitude: capsule.latitude,
+        longitude: capsule.longitude,
+        encryptionKey: encryptionKey,
       );
 
       radarPhase = capsule.isUnlocked ? RadarPhase.searching : RadarPhase.waiting;
@@ -180,6 +196,11 @@ class CapsuleProvider extends ChangeNotifier {
       encryptionKeyUrlSafe: key,
     );
     decryptedMediaBytes = mediaBytes;
+
+    final userId = _recipientUserId;
+    if (userId != null) {
+      await SupabaseService.markReceivedCapsuleViewed(userId: userId, capsuleId: capsule.id);
+    }
   }
 
   @override

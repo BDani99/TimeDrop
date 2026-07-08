@@ -5,14 +5,6 @@
 export default function AnimatedMapBackground() {
   return (
     <div className="fixed inset-0 -z-10 overflow-hidden bg-[var(--color-surface)]">
-      <div
-        className="absolute inset-0 opacity-[0.05]"
-        style={{
-          backgroundImage:
-            'linear-gradient(#57423d 1px, transparent 1px), linear-gradient(90deg, #57423d 1px, transparent 1px)',
-          backgroundSize: '48px 48px',
-        }}
-      />
       <div className="absolute -top-32 -left-24 h-96 w-96 rounded-full bg-[#ff8264] opacity-25 blur-[100px] animate-pulse" />
       <div
         className="absolute top-1/3 -right-24 h-[28rem] w-[28rem] rounded-full bg-[#fecaa3] opacity-40 blur-[120px] animate-pulse"

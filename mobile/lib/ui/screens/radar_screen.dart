@@ -4,9 +4,11 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../core/errors/app_exception.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/capsule_provider.dart';
 import '../../services/geolocation_service.dart';
 import '../widgets/app_snackbar.dart';
@@ -47,9 +49,14 @@ class _RadarScreenState extends State<RadarScreen> {
 
   Future<void> _load() async {
     try {
+      final userId = context.read<AuthProvider>().userId;
+      if (userId == null) {
+        throw const AuthException('You need to be signed in to view this memory.');
+      }
       await context.read<CapsuleProvider>().loadCapsuleForRadar(
             shareId: widget.shareId,
             encryptionKey: widget.encryptionKey,
+            recipientUserId: userId,
           );
     } catch (e) {
       if (!mounted) return;

@@ -12,6 +12,7 @@ import '../widgets/app_snackbar.dart';
 import '../widgets/memory_card.dart';
 import '../widgets/primary_button.dart';
 import 'camera_screen.dart';
+import 'gallery_screen.dart';
 import 'settings_screen.dart';
 
 /// Home / dashboard: CTA to start a new capsule + a simple list of the
@@ -63,12 +64,23 @@ class _HomeScreenState extends State<HomeScreen> {
           child: ListView(
             padding: const EdgeInsets.all(AppSpacing.containerMargin),
             children: [
-              Align(
-                alignment: Alignment.topRight,
-                child: IconButton(
-                  icon: const Icon(Icons.settings_outlined, color: AppColors.onSurfaceVariant),
-                  onPressed: () => openSettingsScreen(context),
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.photo_library_outlined, color: AppColors.onSurfaceVariant),
+                    tooltip: 'Gallery',
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const GalleryScreen()),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined, color: AppColors.onSurfaceVariant),
+                    tooltip: 'Settings',
+                    onPressed: () => openSettingsScreen(context),
+                  ),
+                ],
               ),
               Center(
                 child: Column(

@@ -6,6 +6,7 @@ class SupabaseConstants {
   static const String timeCapsulesTable = 'time_capsules';
   static const String userSettingsTable = 'user_settings';
   static const String savedMemoriesTable = 'saved_memories';
+  static const String receivedCapsulesTable = 'received_capsules';
 
   static const String capsuleMediaBucket = 'capsule-media';
 
