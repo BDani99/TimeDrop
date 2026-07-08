@@ -1,0 +1,33 @@
+# Secrets — .mcp.json embeds a live Supabase personal access token
+# (SUPABASE_ACCESS_TOKEN) with full project management rights. NEVER commit
+# this file. If you need to share the MCP config with a teammate, share the
+# token out-of-band and let them create their own local .mcp.json.
+.mcp.json
+*.env
+.env
+.env.*
+!.env.example
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors / IDEs
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Safety net in case a tool is ever run from the repo root instead of
+# mobile/ or web/ (those two already have their own, more specific
+# .gitignore files that cover Flutter/Gradle/Xcode and Node/Vite output).
+node_modules/
+dist/
+build/
+.dart_tool/
+
+# Supabase CLI local state (only relevant if the CLI is ever run locally;
+# migrations/functions themselves are tracked and pushed via the MCP server)
+supabase/.temp/
+supabase/.branches/
