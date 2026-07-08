@@ -137,7 +137,31 @@ class _CameraBodyState extends State<_CameraBody> {
     return Stack(
       alignment: Alignment.bottomCenter,
       children: [
-        Positioned.fill(child: CameraPreview(controller)),
+        // CameraPreview wraps its texture in an AspectRatio that, given the
+        // loose constraints from a plain Positioned.fill, sizes itself down
+        // to the texture's small natural size instead of filling the
+        // screen (a well-known `camera` plugin layout quirk). Forcing tight
+        // constraints via LayoutBuilder + FittedBox(cover) makes it fill
+        // the screen and crop to match, like a native full-screen preview.
+        Positioned.fill(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return ClipRect(
+                child: OverflowBox(
+                  alignment: Alignment.center,
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    child: SizedBox(
+                      width: constraints.maxWidth,
+                      height: constraints.maxWidth * controller.value.aspectRatio,
+                      child: CameraPreview(controller),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
         Padding(
           padding: const EdgeInsets.only(bottom: 40),
           child: GestureDetector(

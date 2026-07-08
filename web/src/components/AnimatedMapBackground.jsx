@@ -1,28 +1,27 @@
-// Decorative only — dark glassmorphism backdrop with blurred "bokeh"
-// circles evoking captured light. Deliberately diverges from the mobile
-// app's warm/light "Golden Hour" palette (see terv.md §4's explicit dark
-// glassmorphism spec for the web landing page).
+// Decorative only — cream "Golden Hour" backdrop with soft peach/terracotta
+// "ambient glow" bokeh, matching the mobile app's design system 1:1
+// (design/DESIGN.md's "Organic Blurs" + Ambient Glow shadows) instead of
+// diverging into a separate dark theme.
 export default function AnimatedMapBackground() {
   return (
-    <div className="fixed inset-0 -z-10 overflow-hidden bg-[#0b0d12]">
+    <div className="fixed inset-0 -z-10 overflow-hidden bg-[var(--color-surface)]">
       <div
-        className="absolute inset-0 opacity-[0.08]"
+        className="absolute inset-0 opacity-[0.05]"
         style={{
           backgroundImage:
-            'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
+            'linear-gradient(#57423d 1px, transparent 1px), linear-gradient(90deg, #57423d 1px, transparent 1px)',
           backgroundSize: '48px 48px',
         }}
       />
-      <div className="absolute -top-32 -left-24 h-96 w-96 rounded-full bg-[#ff8264] opacity-20 blur-[100px] animate-pulse" />
+      <div className="absolute -top-32 -left-24 h-96 w-96 rounded-full bg-[#ff8264] opacity-25 blur-[100px] animate-pulse" />
       <div
-        className="absolute top-1/3 -right-24 h-[28rem] w-[28rem] rounded-full bg-[#a33d25] opacity-25 blur-[120px] animate-pulse"
+        className="absolute top-1/3 -right-24 h-[28rem] w-[28rem] rounded-full bg-[#fecaa3] opacity-40 blur-[120px] animate-pulse"
         style={{ animationDelay: '1.5s' }}
       />
       <div
-        className="absolute bottom-0 left-1/4 h-80 w-80 rounded-full bg-[#fecaa3] opacity-10 blur-[110px] animate-pulse"
+        className="absolute bottom-0 left-1/4 h-80 w-80 rounded-full bg-[#a33d25] opacity-[0.08] blur-[110px] animate-pulse"
         style={{ animationDelay: '3s' }}
       />
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-[#0b0d12]" />
     </div>
   );
 }

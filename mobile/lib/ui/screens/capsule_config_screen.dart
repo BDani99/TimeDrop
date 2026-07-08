@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/errors/app_exception.dart';
+import '../../core/errors/error_mapper.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
@@ -43,6 +45,7 @@ class CapsuleConfigScreen extends StatefulWidget {
 class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
   Position? _position;
   bool _isLoadingLocation = true;
+  Object? _locationError;
   DateTime? _unlockTime;
 
   @override
@@ -52,6 +55,10 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
   }
 
   Future<void> _loadLocation() async {
+    setState(() {
+      _isLoadingLocation = true;
+      _locationError = null;
+    });
     try {
       final position = await GeolocationService.getCurrentPosition();
       if (!mounted) return;
@@ -61,7 +68,10 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _isLoadingLocation = false);
+      setState(() {
+        _isLoadingLocation = false;
+        _locationError = e;
+      });
       AppSnackbar.showError(context, e);
     }
   }
@@ -173,9 +183,11 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
               height: 220,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(24),
-                child: _isLoadingLocation || _position == null
+                child: _isLoadingLocation
                     ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
-                    : FlutterMap(
+                    : _position == null
+                        ? _LocationErrorRetry(error: _locationError, onRetry: _loadLocation)
+                        : FlutterMap(
                         options: MapOptions(
                           initialCenter: LatLng(_position!.latitude, _position!.longitude),
                           initialZoom: 16,
@@ -219,6 +231,48 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
               onPressed: _seal,
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown in place of the map when location couldn't be determined (denied
+/// permission, disabled location services, etc.) — replaces what used to be
+/// an indefinite spinner, since `_isLoadingLocation == false` with
+/// `_position == null` means the fetch already failed, not that it's still
+/// in flight.
+class _LocationErrorRetry extends StatelessWidget {
+  const _LocationErrorRetry({required this.error, required this.onRetry});
+
+  final Object? error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: AppColors.surfaceContainerLow,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.location_off_outlined, color: AppColors.onSurfaceVariant),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                error != null ? mapErrorToMessage(error!) : 'Couldn\'t get your location.',
+                textAlign: TextAlign.center,
+                style: AppTypography.labelMd,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              TextButton(onPressed: onRetry, child: const Text('Try again')),
+              // Covers the "already permanently denied" case, where
+              // re-requesting the permission silently returns denied again
+              // with no OS dialog — Settings is the only way out.
+              TextButton(onPressed: openAppSettings, child: const Text('Open Settings')),
+            ],
+          ),
         ),
       ),
     );

@@ -73,7 +73,11 @@ class NotificationService {
           ),
           iOS: DarwinNotificationDetails(),
         ),
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        // Inexact scheduling deliberately avoids Android 12+'s
+        // SCHEDULE_EXACT_ALARM permission, which Play Store restricts to
+        // alarm-clock/calendar-category apps — a reminder notification like
+        // this one doesn't qualify, and being off by a few minutes is fine.
+        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
       );

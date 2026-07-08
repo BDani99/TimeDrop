@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
@@ -65,6 +66,11 @@ class _PermissionGateState extends State<PermissionGate> {
                 ),
                 const SizedBox(height: AppSpacing.md),
                 PrimaryButton(label: 'Try Again', onPressed: _check),
+                const SizedBox(height: AppSpacing.xs),
+                // If the OS already recorded a "don't allow"/permanent
+                // denial, re-requesting silently returns denied again with
+                // no dialog — Settings is the only way out at that point.
+                TextButton(onPressed: openAppSettings, child: const Text('Open Settings')),
               ],
             ),
           ),

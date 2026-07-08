@@ -1,8 +1,20 @@
 @import "tailwindcss";
 
+/* "Golden Hour" design tokens — 1:1 with mobile/lib/core/theme/app_colors.dart,
+   so the web landing page reads as the same product as the app. */
 @theme {
   --font-display: "Playfair Display", serif;
   --font-body: "Plus Jakarta Sans", sans-serif;
+
+  --color-surface: #faf9f6;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f4f3f1;
+  --color-on-surface: #1a1c1a;
+  --color-on-surface-variant: #57423d;
+  --color-outline-variant: #dec0b9;
+  --color-primary: #a33d25;
+  --color-primary-container: #ff8264;
+  --color-secondary-container: #fecaa3;
 }
 
 html,
@@ -13,7 +25,7 @@ body,
 
 body {
   margin: 0;
-  background-color: #0b0d12;
+  background-color: var(--color-surface);
   font-family: var(--font-body);
   overflow-x: hidden;
 }

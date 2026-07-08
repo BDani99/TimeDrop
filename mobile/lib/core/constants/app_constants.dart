@@ -7,9 +7,9 @@ class AppConstants {
 
   static const String appName = 'TimeDrop';
 
-  /// Base host for generated share links. MUST match the Vercel project
-  /// slug decided for `web/` (see terv.md §2 and the plan's naming decision).
-  static const String shareBaseUrl = 'https://timedrop.vercel.app';
+  /// Base host for generated share links. MUST match the actual Vercel
+  /// deployment domain for `web/` (see terv.md §2).
+  static const String shareBaseUrl = 'https://time-drop-pink.vercel.app';
 
   /// Radar UI outer blur zone radius, in meters.
   static const double radarZoneRadiusMeters = 100;

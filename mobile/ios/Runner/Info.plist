@@ -26,6 +26,12 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>TimeDrop needs camera access to record the video memory you're sealing into a time capsule.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>TimeDrop needs microphone access to record audio with your video memory.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>TimeDrop needs your location to place a memory where it happened, and to help you find memories left for you nearby.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
