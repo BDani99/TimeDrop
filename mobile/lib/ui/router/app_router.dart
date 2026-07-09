@@ -4,14 +4,19 @@ import 'package:provider/provider.dart';
 import '../../core/utils/share_link_parser.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/capsule_provider.dart';
+import '../../providers/payment_provider.dart';
+import '../../providers/settings_provider.dart';
 import '../../services/clipboard_service.dart';
+import '../../services/system_settings_service.dart';
 import '../screens/home_screen.dart';
+import '../screens/onboarding_screen.dart';
 import '../screens/radar_screen.dart';
 import '../screens/splash_screen.dart';
 import '../widgets/app_snackbar.dart';
 
-/// Splash → clipboard check → RadarScreen (valid TimeDrop link found) or
-/// HomeScreen (no link) — per terv.md Sprint 0's MainRouter spec.
+/// Splash → bootstrap (auth + settings + system config + persisted premium)
+/// → clipboard check → RadarScreen (valid link), OnboardingScreen (fresh new
+/// user), or HomeScreen.
 class MainRouter extends StatefulWidget {
   const MainRouter({super.key});
 
@@ -21,6 +26,7 @@ class MainRouter extends StatefulWidget {
 
 class _MainRouterState extends State<MainRouter> with WidgetsBindingObserver {
   bool _bootstrapped = false;
+  bool _onboardingCompleted = false;
   ShareLinkModel? _pendingLink;
 
   @override
@@ -44,12 +50,34 @@ class _MainRouterState extends State<MainRouter> with WidgetsBindingObserver {
   }
 
   Future<void> _bootstrap() async {
+    // Capture providers up front so we never touch `context` across an
+    // async gap below.
+    final auth = context.read<AuthProvider>();
+    final settings = context.read<SettingsProvider>();
+    final payment = context.read<PaymentProvider>();
+
     try {
-      await context.read<AuthProvider>().bootstrap();
+      await auth.bootstrap();
+      final userId = auth.userId;
+
+      if (userId != null) {
+        // Load per-account settings (onboarding + free drop state). Kept
+        // non-fatal so a transient settings error doesn't block the app.
+        try {
+          await settings.load(userId);
+        } catch (e) {
+          if (mounted) AppSnackbar.showError(context, e);
+        }
+      }
+      // Runtime config + persisted premium are both best-effort.
+      await SystemSettingsService.fetch();
+      await payment.loadPersistedPremium();
+
       final link = await ClipboardService.checkClipboardForShareLink();
       if (!mounted) return;
       setState(() {
         _pendingLink = link;
+        _onboardingCompleted = settings.onboardingCompleted;
         _bootstrapped = true;
       });
     } catch (e) {
@@ -71,18 +99,38 @@ class _MainRouterState extends State<MainRouter> with WidgetsBindingObserver {
 
     final link = _pendingLink;
     if (link != null) {
+      // Recipient: show their drop first. Onboarding (for new users) fires
+      // when they leave the radar/video via `enterAppAfterRecipient`.
       return RadarScreen(
         key: ValueKey('radar-${link.shareId}'),
         shareId: link.shareId,
         encryptionKey: link.encryptionKey,
       );
     }
+
+    if (!_onboardingCompleted) return const OnboardingScreen();
     return const HomeScreen();
   }
 }
 
-/// Convenience for screens that finish the Radar flow and want to return to
-/// a clean Home without re-triggering the clipboard link.
+/// Called when a recipient closes the map/video of a drop they received.
+/// Stops the GPS stream and enters the main app — routing a brand-new user
+/// through onboarding first (per the "onboarding on close" requirement),
+/// otherwise straight to Home.
+void enterAppAfterRecipient(BuildContext context) {
+  context.read<CapsuleProvider>().stopWatchingPosition();
+  final onboardingDone = context.read<SettingsProvider>().onboardingCompleted;
+  Navigator.pushAndRemoveUntil(
+    context,
+    MaterialPageRoute(
+      builder: (_) => onboardingDone ? const HomeScreen() : const OnboardingScreen(),
+    ),
+    (route) => false,
+  );
+}
+
+/// Convenience for screens that finish the Radar flow and want to stop the
+/// GPS stream without re-triggering the clipboard link.
 void clearPendingRadarLink(BuildContext context) {
   context.read<CapsuleProvider>().stopWatchingPosition();
 }

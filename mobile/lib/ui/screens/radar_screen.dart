@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/constants/app_constants.dart';
+import '../../core/config/system_config.dart';
 import '../../core/errors/app_exception.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
@@ -16,7 +16,7 @@ import '../widgets/countdown_timer.dart';
 import '../widgets/permission_gate.dart';
 import '../widgets/primary_button.dart';
 import '../widgets/radar_view.dart';
-import 'home_screen.dart';
+import '../router/app_router.dart';
 import 'video_player_screen.dart';
 
 /// Post-unlock-link screen: waits for the unlock time, then streams GPS
@@ -65,10 +65,36 @@ class _RadarScreenState extends State<RadarScreen> {
     }
   }
 
+  /// Exit affordance. When this screen was pushed from the Gallery it just
+  /// pops back there; when it's the recipient-clipboard entry (the app's
+  /// root) it enters the main app, routing brand-new users through
+  /// onboarding first.
+  void _exit() {
+    context.read<CapsuleProvider>().stopWatchingPosition();
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    } else {
+      enterAppAfterRecipient(context);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final canPop = Navigator.of(context).canPop();
     return Scaffold(
       backgroundColor: AppColors.surface,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(canPop ? Icons.arrow_back : Icons.close),
+          onPressed: _exit,
+        ),
+        actions: [
+          if (!canPop)
+            TextButton(onPressed: _exit, child: const Text('Explore the app')),
+        ],
+      ),
       body: SafeArea(
         child: PermissionGate(
           requestPermission: GeolocationService.ensurePermissionGranted,
@@ -81,13 +107,7 @@ class _RadarScreenState extends State<RadarScreen> {
               }
 
               if (_loadFailed) {
-                return _ErrorState(
-                  onBackHome: () => Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (_) => const HomeScreen()),
-                    (route) => false,
-                  ),
-                );
+                return _ErrorState(onBackHome: _exit);
               }
 
               return Consumer<CapsuleProvider>(
@@ -119,7 +139,7 @@ class _RadarScreenState extends State<RadarScreen> {
                             const SizedBox(height: AppSpacing.lg),
                             RadarView(
                               center: center,
-                              radiusMeters: AppConstants.radarZoneRadiusMeters,
+                              radiusMeters: SystemConfig.instance.radarZoneRadiusMeters,
                               distanceMeters: null,
                             ),
                           ],
@@ -142,7 +162,7 @@ class _RadarScreenState extends State<RadarScreen> {
                             const SizedBox(height: AppSpacing.lg),
                             RadarView(
                               center: center,
-                              radiusMeters: AppConstants.radarZoneRadiusMeters,
+                              radiusMeters: SystemConfig.instance.radarZoneRadiusMeters,
                               distanceMeters: capsuleProvider.distanceMeters,
                             ),
                           ],

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../core/config/system_config.dart';
 import '../core/constants/app_constants.dart';
 import '../core/errors/app_exception.dart';
 import '../models/capsule_metadata.dart';
@@ -11,6 +13,7 @@ import '../services/crypto_service.dart';
 import '../services/geolocation_service.dart';
 import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
+import '../services/video_service.dart';
 
 enum RadarPhase { locating, waiting, searching, unlocked }
 
@@ -38,12 +41,14 @@ class CapsuleProvider extends ChangeNotifier {
   /// forever" flow, which persists it into `saved_memories`.
   String? get pendingEncryptionKey => _pendingEncryptionKey;
 
-  /// Sprint 1: encrypts [mediaBytes], uploads it, and creates the DB row.
+  /// Sprint 1: compresses the recorded video at [mediaPath], encrypts it,
+  /// uploads it, and creates the DB row. Taking a *path* (not bytes) is the
+  /// OOM fix — the full video never lives in memory across screens; only the
+  /// smaller compressed file is read into memory once, here, at upload time.
   /// Returns the share id + encryption key on success — the caller (e.g.
-  /// ShareScreen) builds the final URL via `ShareService.buildShareUrl`,
-  /// which also has access to the sender's display name for `?from=`.
+  /// ShareScreen) builds the final URL via `ShareService.buildShareUrl`.
   Future<CapsuleShareInfo> createCapsule({
-    required Uint8List mediaBytes,
+    required String mediaPath,
     required String mimeType,
     required int durationMs,
     required double latitude,
@@ -54,6 +59,8 @@ class CapsuleProvider extends ChangeNotifier {
     isCreating = true;
     notifyListeners();
     try {
+      final compressedPath = await VideoService.compress(mediaPath);
+      final mediaBytes = await File(compressedPath).readAsBytes();
       final encryption = await CryptoService.encryptAndUpload(
         mediaBytes: mediaBytes,
         mimeType: mimeType,
@@ -163,7 +170,7 @@ class CapsuleProvider extends ChangeNotifier {
       );
       distanceMeters = meters;
 
-      if (capsule.isUnlocked && meters <= AppConstants.unlockProximityMeters) {
+      if (capsule.isUnlocked && meters <= SystemConfig.instance.unlockProximityMeters) {
         if (radarPhase != RadarPhase.unlocked) {
           radarPhase = RadarPhase.unlocked;
           await _decryptActiveCapsule();

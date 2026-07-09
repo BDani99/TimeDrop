@@ -10,7 +10,7 @@ import '../../core/theme/app_spacing.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/modals/memory_saved_modal.dart';
 import '../widgets/primary_button.dart';
-import 'home_screen.dart';
+import '../router/app_router.dart';
 
 /// Plays the decrypted capsule media once the Radar screen unlocks it.
 /// Writes [mediaBytes] to a temp file (video_player needs a file/URL, not
@@ -100,17 +100,16 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 onPressed: () async {
                   await MemorySavedModal.show(context);
                   if (!context.mounted) return;
-                  // RadarScreen (this screen's predecessor) is always reached
-                  // via MainRouter's clipboard-link swap, i.e. it *is* the
-                  // root route — there is no HomeScreen already on the stack
-                  // to pop back to (`Navigator.popUntil(isFirst)` would be a
-                  // no-op here). `pushAndRemoveUntil` guarantees landing on a
-                  // fresh Home either way.
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (_) => const HomeScreen()),
-                    (route) => false,
-                  );
+                  // Reached either from the Gallery (there's a route beneath
+                  // to pop back to) or via the recipient-clipboard flow where
+                  // this replaced the root RadarScreen. In the latter case,
+                  // enter the app — routing a brand-new recipient through
+                  // onboarding first.
+                  if (Navigator.of(context).canPop()) {
+                    Navigator.of(context).pop();
+                  } else {
+                    enterAppAfterRecipient(context);
+                  }
                 },
               ),
             ),

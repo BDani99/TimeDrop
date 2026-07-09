@@ -35,4 +35,15 @@ class AppConstants {
   /// Reviewer bypass: tap count on the paywall title before the password
   /// field appears (App Store / Play reviewer QA path).
   static const int reviewerBypassTapCount = 10;
+
+  /// Placeholder subscription pricing shown on the Paywall (mock payments —
+  /// real prices come from the store once RevenueCat is configured).
+  static const String monthlyPriceLabel = '\$4.99 / month';
+  static const String yearlyPriceLabel = '\$39.99 / year';
+  static const String yearlySavingLabel = 'Save 33%';
+
+  /// Legal links shown at the bottom of the Paywall. Placeholder pages on the
+  /// web domain — replace with real Terms/Privacy pages before launch.
+  static const String termsUrl = '$shareBaseUrl/terms';
+  static const String privacyUrl = '$shareBaseUrl/privacy';
 }

@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -29,12 +27,12 @@ import 'share_screen.dart';
 class CapsuleConfigScreen extends StatefulWidget {
   const CapsuleConfigScreen({
     super.key,
-    required this.videoBytes,
+    required this.videoPath,
     required this.mimeType,
     required this.durationMs,
   });
 
-  final Uint8List videoBytes;
+  final String videoPath;
   final String mimeType;
   final int durationMs;
 
@@ -138,7 +136,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
         throw const AuthException('You need to be signed in to create a memory.');
       }
       final info = await capsuleProvider.createCapsule(
-        mediaBytes: widget.videoBytes,
+        mediaPath: widget.videoPath,
         mimeType: widget.mimeType,
         durationMs: widget.durationMs,
         latitude: position.latitude,

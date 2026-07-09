@@ -13,10 +13,17 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   bool get freeDropUsed => settings?.freeDropUsed ?? false;
+  bool get onboardingCompleted => settings?.onboardingCompleted ?? false;
 
   Future<void> markFreeDropUsed(String userId) async {
     await SupabaseService.markFreeDropUsed(userId);
     settings = settings?.copyWith(freeDropUsed: true);
+    notifyListeners();
+  }
+
+  Future<void> completeOnboarding(String userId, {Map<String, dynamic>? answers}) async {
+    await SupabaseService.completeOnboarding(userId: userId, answers: answers);
+    settings = settings?.copyWith(onboardingCompleted: true, onboardingAnswers: answers);
     notifyListeners();
   }
 }

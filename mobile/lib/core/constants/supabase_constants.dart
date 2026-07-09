@@ -7,10 +7,18 @@ class SupabaseConstants {
   static const String userSettingsTable = 'user_settings';
   static const String savedMemoriesTable = 'saved_memories';
   static const String receivedCapsulesTable = 'received_capsules';
+  static const String systemSettingsTable = 'system_settings';
+  static const String deviceSubscriptionsTable = 'device_subscriptions';
 
   static const String capsuleMediaBucket = 'capsule-media';
 
   static const String getCapsuleByShareIdRpc = 'get_capsule_by_share_id';
+  static const String getDeviceSubscriptionRpc = 'get_device_subscription';
+  static const String setDeviceSubscriptionRpc = 'set_device_subscription';
 
   static const String mergeAnonymousAccountFunction = 'merge-anonymous-account';
+
+  /// system_settings keys.
+  static const String settingRadarZoneRadius = 'radar_zone_radius_meters';
+  static const String settingUnlockProximity = 'unlock_proximity_meters';
 }

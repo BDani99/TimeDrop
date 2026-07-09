@@ -61,6 +61,77 @@ class SupabaseService {
     }
   }
 
+  static Future<void> completeOnboarding({
+    required String userId,
+    Map<String, dynamic>? answers,
+  }) async {
+    try {
+      await client.from(SupabaseConstants.userSettingsTable).update({
+        'onboarding_completed': true,
+        'onboarding_answers': ?answers,
+      }).eq('user_id', userId);
+    } catch (e) {
+      throw AuthException('Could not save your onboarding.', cause: e);
+    }
+  }
+
+  /// Reads the runtime `system_settings` key/value pairs as a numeric map.
+  static Future<Map<String, double>> fetchSystemSettings() async {
+    try {
+      final rows = await client
+          .from(SupabaseConstants.systemSettingsTable)
+          .select('key, value');
+      final result = <String, double>{};
+      for (final row in rows as List) {
+        final map = row as Map<String, dynamic>;
+        final key = map['key'] as String?;
+        final value = map['value'];
+        if (key != null && value != null) {
+          result[key] = (value as num).toDouble();
+        }
+      }
+      return result;
+    } catch (e) {
+      throw CapsuleException('Could not load app settings.', cause: e);
+    }
+  }
+
+  /// Reads (mock) subscription state for a device hash via the
+  /// SECURITY DEFINER RPC. Returns null if the device has no record.
+  static Future<DeviceSubscription?> getDeviceSubscription(String deviceHash) async {
+    try {
+      final rows = await client.rpc(
+        SupabaseConstants.getDeviceSubscriptionRpc,
+        params: {'p_device_hash': deviceHash},
+      );
+      final list = rows as List;
+      if (list.isEmpty) return null;
+      final map = list.first as Map<String, dynamic>;
+      return DeviceSubscription(
+        isPremium: map['is_premium'] as bool? ?? false,
+        subscriptionType: map['subscription_type'] as String?,
+      );
+    } catch (e) {
+      throw PaymentException('Could not check your subscription.', cause: e);
+    }
+  }
+
+  static Future<void> setDeviceSubscription({
+    required String deviceHash,
+    required bool isPremium,
+    String? subscriptionType,
+  }) async {
+    try {
+      await client.rpc(SupabaseConstants.setDeviceSubscriptionRpc, params: {
+        'p_device_hash': deviceHash,
+        'p_is_premium': isPremium,
+        'p_subscription_type': subscriptionType,
+      });
+    } catch (e) {
+      throw PaymentException('Could not save your subscription.', cause: e);
+    }
+  }
+
   static Future<void> insertCapsule({
     required String creatorId,
     required String shareId,
@@ -201,4 +272,12 @@ class SupabaseService {
       throw CapsuleException('Could not load your gallery.', cause: e);
     }
   }
+}
+
+/// Result of [SupabaseService.getDeviceSubscription].
+class DeviceSubscription {
+  const DeviceSubscription({required this.isPremium, this.subscriptionType});
+
+  final bool isPremium;
+  final String? subscriptionType;
 }
