@@ -106,6 +106,10 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
+  # App icon + native splash screen generation from source images
+  flutter_launcher_icons: ^0.14.3
+  flutter_native_splash: ^2.4.4
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
@@ -118,9 +122,8 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    - assets/icon/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
@@ -147,3 +150,21 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# App icon generation — run: dart run flutter_launcher_icons
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path_android: "assets/icon/android_icon.png"
+  image_path_ios: "assets/icon/ios_icon.png"
+  remove_alpha_ios: true
+
+# Native splash screen generation — run: dart run flutter_native_splash:create
+flutter_native_splash:
+  color: "#0D0E10"
+  image: "assets/icon/splash.png"
+  android_12:
+    image: "assets/icon/splash.png"
+    color: "#0D0E10"
+  android: true
+  ios: true
