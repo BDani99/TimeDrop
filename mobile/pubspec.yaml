@@ -48,9 +48,15 @@ dependencies:
   geolocator: ^13.0.2
   permission_handler: ^11.3.1
 
+  # Reverse geocoding (lat/lng → city) via the native platform geocoder
+  geocoding: ^4.0.0
+
   # Media capture / playback
   camera: ^0.11.1
   video_player: ^2.9.2
+
+  # Photo attachments (up to 3 per capsule) from the gallery
+  image_picker: ^1.1.2
 
   # Async video compression before upload (keeps Storage cost + memory down)
   video_compress: ^3.1.3

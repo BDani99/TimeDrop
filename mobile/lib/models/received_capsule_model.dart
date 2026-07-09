@@ -14,6 +14,8 @@ class ReceivedCapsuleModel {
     required this.isViewed,
     required this.firstSeenAt,
     this.encryptionKey,
+    this.fromName,
+    this.city,
   });
 
   final String id;
@@ -30,8 +32,21 @@ class ReceivedCapsuleModel {
   /// design), so a code alone can never unlock the content.
   final String? encryptionKey;
 
+  /// Sender's display name captured from the link's `?from=` param.
+  final String? fromName;
+
+  /// Reverse-geocoded city label (cached); null if unknown/offline.
+  final String? city;
+
   bool get hasKey => encryptionKey != null;
   bool get isUnlockTimeReached => DateTime.now().toUtc().isAfter(unlockTime.toUtc());
+
+  /// "From X · City" subtitle for Vault cards.
+  String get senderLabel {
+    final name = (fromName != null && fromName!.isNotEmpty) ? fromName! : 'someone';
+    final base = 'From $name';
+    return (city != null && city!.isNotEmpty) ? '$base · $city' : base;
+  }
 
   factory ReceivedCapsuleModel.fromJson(Map<String, dynamic> json) {
     return ReceivedCapsuleModel(
@@ -44,6 +59,8 @@ class ReceivedCapsuleModel {
       isViewed: json['is_viewed'] as bool? ?? false,
       firstSeenAt: DateTime.parse(json['first_seen_at'] as String),
       encryptionKey: json['encryption_key'] as String?,
+      fromName: json['from_name'] as String?,
+      city: json['city'] as String?,
     );
   }
 }

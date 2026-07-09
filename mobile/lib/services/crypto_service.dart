@@ -1,7 +1,9 @@
 import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
+import 'package:cryptography/cryptography.dart' show SecretKey;
 import 'package:uuid/uuid.dart';
 
 import '../core/constants/app_constants.dart';
@@ -12,52 +14,79 @@ import 'storage_service.dart';
 
 /// Capsule-level encrypt/decrypt orchestration: ties the pure crypto
 /// primitives in [AesGcmEnvelope] together with [StorageService] and the
-/// metadata JSON shape, per the two-envelope design (media blob + metadata).
+/// metadata JSON shape. Multi-blob design: the video and each photo are
+/// their own encrypted Storage object under the *same* per-capsule key; the
+/// note text + the blob paths live in the encrypted metadata envelope.
 class CryptoService {
   CryptoService._();
 
   static const _uuid = Uuid();
 
-  /// Encrypts [mediaBytes] and uploads it, then returns the base64-encoded
-  /// metadata envelope to store in `time_capsules.encrypted_payload`, plus
-  /// the raw key bytes (URL-safe encoded) for the share link.
-  static Future<CapsuleEncryptionResult> encryptAndUpload({
-    required Uint8List mediaBytes,
-    required String mimeType,
+  /// Generates a fresh per-capsule key, URL-safe encoded for the share link.
+  /// Generated up front (before upload) so optimistic UI can show the link
+  /// immediately while the background task encrypts with the same key.
+  static Future<String> generateKeyUrlSafe() async {
+    final key = await AesGcmEnvelope.generateKey();
+    return AesGcmEnvelope.keyToUrlSafeString(key);
+  }
+
+  /// Encrypts + uploads the (already compressed) video and each photo as
+  /// separate blobs, then returns the base64-encoded metadata envelope to
+  /// store in `time_capsules.encrypted_payload`. Reads one file into memory
+  /// at a time to keep the footprint small.
+  static Future<String> encryptAndUploadCapsule({
+    required String keyUrlSafe,
+    required String videoPath,
+    required List<String> photoPaths,
+    required String videoMimeType,
     required int durationMs,
     required String creatorId,
+    String? note,
+    int? coverPhotoIndex,
   }) async {
-    final key = await AesGcmEnvelope.generateKey();
+    final key = AesGcmEnvelope.keyFromUrlSafeString(keyUrlSafe);
 
-    final mediaEnvelope = await AesGcmEnvelope.encrypt(
-      plaintext: mediaBytes,
-      key: key,
-    );
+    final videoBytes = await File(videoPath).readAsBytes();
+    final videoStoragePath = await _encryptAndUpload(videoBytes, key, creatorId);
+    final videoRef = CapsuleMediaRef(storagePath: videoStoragePath, mimeType: videoMimeType);
 
-    final storagePath = '$creatorId/${_uuid.v4()}.enc';
-    await StorageService.uploadEncrypted(
-      storagePath: storagePath,
-      encryptedBytes: mediaEnvelope,
-    );
+    final photoRefs = <CapsuleMediaRef>[];
+    for (final path in photoPaths) {
+      final bytes = await File(path).readAsBytes();
+      final storagePath = await _encryptAndUpload(bytes, key, creatorId);
+      photoRefs.add(CapsuleMediaRef(storagePath: storagePath, mimeType: _photoMime(path)));
+    }
 
     final metadata = CapsuleMetadata(
-      storagePath: storagePath,
-      mimeType: mimeType,
+      video: videoRef,
       durationMs: durationMs,
       capturedAt: DateTime.now().toUtc(),
+      note: (note != null && note.trim().isNotEmpty) ? note.trim() : null,
+      photos: photoRefs,
+      coverPhotoIndex: (coverPhotoIndex != null &&
+              coverPhotoIndex >= 0 &&
+              coverPhotoIndex < photoRefs.length)
+          ? coverPhotoIndex
+          : null,
     );
     final metadataBytes = Uint8List.fromList(utf8.encode(jsonEncode(metadata.toJson())));
-    final metadataEnvelope = await AesGcmEnvelope.encrypt(
-      plaintext: metadataBytes,
-      key: key,
-    );
+    final metadataEnvelope = await AesGcmEnvelope.encrypt(plaintext: metadataBytes, key: key);
+    return base64Encode(metadataEnvelope);
+  }
 
-    final encryptionKey = await AesGcmEnvelope.keyToUrlSafeString(key);
+  static Future<String> _encryptAndUpload(Uint8List bytes, SecretKey key, String creatorId) async {
+    final envelope = await AesGcmEnvelope.encrypt(plaintext: bytes, key: key);
+    final storagePath = '$creatorId/${_uuid.v4()}.enc';
+    await StorageService.uploadEncrypted(storagePath: storagePath, encryptedBytes: envelope);
+    return storagePath;
+  }
 
-    return CapsuleEncryptionResult(
-      encryptedPayloadBase64: base64Encode(metadataEnvelope),
-      encryptionKeyUrlSafe: encryptionKey,
-    );
+  static String _photoMime(String path) {
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.heic')) return 'image/heic';
+    return 'image/jpeg';
   }
 
   /// Decodes the metadata envelope from `encrypted_payload` using the key
@@ -78,13 +107,13 @@ class CryptoService {
     return CapsuleMetadata.fromJson(json);
   }
 
-  /// Downloads and decrypts the raw media bytes referenced by [metadata].
-  static Future<Uint8List> decryptMedia({
-    required CapsuleMetadata metadata,
+  /// Downloads and decrypts a single encrypted blob (video or photo).
+  static Future<Uint8List> decryptBlob({
+    required String storagePath,
     required String encryptionKeyUrlSafe,
   }) async {
     final key = AesGcmEnvelope.keyFromUrlSafeString(encryptionKeyUrlSafe);
-    final envelope = await StorageService.downloadEncrypted(metadata.storagePath);
+    final envelope = await StorageService.downloadEncrypted(storagePath);
     return AesGcmEnvelope.decrypt(envelope: envelope, key: key);
   }
 
@@ -98,14 +127,4 @@ class CryptoService {
       (_) => alphabet[random.nextInt(alphabet.length)],
     ).join();
   }
-}
-
-class CapsuleEncryptionResult {
-  const CapsuleEncryptionResult({
-    required this.encryptedPayloadBase64,
-    required this.encryptionKeyUrlSafe,
-  });
-
-  final String encryptedPayloadBase64;
-  final String encryptionKeyUrlSafe;
 }

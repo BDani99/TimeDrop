@@ -1,4 +1,5 @@
 import DownloadButton from './DownloadButton';
+import CopyLinkButton from './CopyLinkButton';
 
 // "Memory Card" pattern from design/DESIGN.md, mirrored from the mobile
 // app's memoryCardDecoration(): 32px rounded corners, ambient orange-tinted
@@ -31,6 +32,7 @@ export default function LandingCard({ shareId, fromName }) {
       </p>
 
       <DownloadButton />
+      <CopyLinkButton />
 
       <p className="mt-6 font-mono text-xs tracking-widest text-[var(--color-on-surface-variant)]/60 uppercase">
         Share code {shareId}

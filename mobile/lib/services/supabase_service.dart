@@ -132,23 +132,27 @@ class SupabaseService {
     }
   }
 
-  static Future<void> insertCapsule({
+  /// Optimistic UI: reserve a capsule row immediately (status 'pending',
+  /// no encrypted_payload yet) so the share link is valid the instant the
+  /// user taps "Seal". The background upload later fills the payload via
+  /// [updateCapsulePayload]. Returns the new row id.
+  static Future<String> insertPendingCapsule({
     required String creatorId,
     required String shareId,
-    required String encryptedPayload,
     required double latitude,
     required double longitude,
     required DateTime unlockTime,
   }) async {
     try {
-      await client.from(SupabaseConstants.timeCapsulesTable).insert({
+      final row = await client.from(SupabaseConstants.timeCapsulesTable).insert({
         'creator_id': creatorId,
         'share_id': shareId,
-        'encrypted_payload': encryptedPayload,
         'latitude': latitude,
         'longitude': longitude,
         'unlock_time': unlockTime.toUtc().toIso8601String(),
-      });
+        'status': 'pending',
+      }).select('id').single();
+      return row['id'] as String;
     } on PostgrestException catch (e) {
       if (e.code == '23505') {
         // Unique violation on share_id — caller retries with a new code.
@@ -157,6 +161,23 @@ class SupabaseService {
       throw CapsuleException('Could not save your capsule.', cause: e);
     } catch (e) {
       throw CapsuleException('Could not save your capsule.', cause: e);
+    }
+  }
+
+  /// Background-upload completion: attach the encrypted payload and flip the
+  /// status (to 'ready' on success, or 'failed').
+  static Future<void> updateCapsulePayload({
+    required String capsuleId,
+    String? encryptedPayload,
+    required String status,
+  }) async {
+    try {
+      await client.from(SupabaseConstants.timeCapsulesTable).update({
+        'encrypted_payload': ?encryptedPayload,
+        'status': status,
+      }).eq('id', capsuleId);
+    } catch (e) {
+      throw CapsuleException('Could not finalize your capsule.', cause: e);
     }
   }
 
@@ -224,6 +245,7 @@ class SupabaseService {
     required double latitude,
     required double longitude,
     String? encryptionKey,
+    String? fromName,
   }) async {
     try {
       final payload = <String, dynamic>{
@@ -233,13 +255,46 @@ class SupabaseService {
         'unlock_time': unlockTime.toUtc().toIso8601String(),
         'latitude': latitude,
         'longitude': longitude,
+        'encryption_key': ?encryptionKey,
+        'from_name': ?fromName,
       };
-      if (encryptionKey != null) payload['encryption_key'] = encryptionKey;
       await client
           .from(SupabaseConstants.receivedCapsulesTable)
           .upsert(payload, onConflict: 'user_id,capsule_id');
     } catch (e) {
       throw CapsuleException('Could not save this memory to your gallery.', cause: e);
+    }
+  }
+
+  /// Persists a reverse-geocoded city label for a received capsule (best
+  /// effort — Vault fills this lazily so it isn't recomputed each load).
+  static Future<void> updateReceivedCapsuleCity({
+    required String userId,
+    required String capsuleId,
+    required String city,
+  }) async {
+    try {
+      await client
+          .from(SupabaseConstants.receivedCapsulesTable)
+          .update({'city': city})
+          .eq('user_id', userId)
+          .eq('capsule_id', capsuleId);
+    } catch (_) {
+      // Non-fatal — the city is a cosmetic cache.
+    }
+  }
+
+  static Future<void> updateUserDisplayName({
+    required String userId,
+    required String displayName,
+  }) async {
+    try {
+      await client
+          .from(SupabaseConstants.userSettingsTable)
+          .update({'display_name': displayName})
+          .eq('user_id', userId);
+    } catch (e) {
+      throw AuthException('Could not save your name.', cause: e);
     }
   }
 

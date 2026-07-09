@@ -14,6 +14,13 @@ class SettingsProvider extends ChangeNotifier {
 
   bool get freeDropUsed => settings?.freeDropUsed ?? false;
   bool get onboardingCompleted => settings?.onboardingCompleted ?? false;
+  String? get displayName => settings?.displayName;
+
+  Future<void> setDisplayName(String userId, String name) async {
+    await SupabaseService.updateUserDisplayName(userId: userId, displayName: name);
+    settings = settings?.copyWith(displayName: name);
+    notifyListeners();
+  }
 
   Future<void> markFreeDropUsed(String userId) async {
     await SupabaseService.markFreeDropUsed(userId);

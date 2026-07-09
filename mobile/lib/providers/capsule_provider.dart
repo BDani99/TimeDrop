@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
@@ -11,11 +10,15 @@ import '../models/capsule_metadata.dart';
 import '../models/capsule_model.dart';
 import '../services/crypto_service.dart';
 import '../services/geolocation_service.dart';
+import '../services/media_cache_service.dart';
 import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
 import '../services/video_service.dart';
 
 enum RadarPhase { locating, waiting, searching, unlocked }
+
+/// Background-upload lifecycle for a just-created capsule (optimistic UI).
+enum CapsuleUploadState { uploading, ready, failed }
 
 /// Owns both halves of the capsule lifecycle: Sprint 1 creation (encrypt +
 /// upload + insert) and Sprint 2 retrieval (RPC lookup + distance stream +
@@ -29,6 +32,8 @@ class CapsuleProvider extends ChangeNotifier {
   CapsuleModel? activeCapsule;
   CapsuleMetadata? decryptedMetadata;
   Uint8List? decryptedMediaBytes;
+  String? decryptedNote;
+  List<Uint8List> decryptedPhotos = const [];
   double? distanceMeters;
   RadarPhase radarPhase = RadarPhase.locating;
 
@@ -41,42 +46,43 @@ class CapsuleProvider extends ChangeNotifier {
   /// forever" flow, which persists it into `saved_memories`.
   String? get pendingEncryptionKey => _pendingEncryptionKey;
 
-  /// Sprint 1: compresses the recorded video at [mediaPath], encrypts it,
-  /// uploads it, and creates the DB row. Taking a *path* (not bytes) is the
-  /// OOM fix — the full video never lives in memory across screens; only the
-  /// smaller compressed file is read into memory once, here, at upload time.
-  /// Returns the share id + encryption key on success — the caller (e.g.
-  /// ShareScreen) builds the final URL via `ShareService.buildShareUrl`.
-  Future<CapsuleShareInfo> createCapsule({
+  /// Per-capsule background-upload state, so the sent list can show a
+  /// "still uploading" / "failed" badge.
+  final Map<String, CapsuleUploadState> _uploadStates = {};
+  CapsuleUploadState uploadStateFor(String capsuleId) =>
+      _uploadStates[capsuleId] ?? CapsuleUploadState.ready;
+
+  /// Optimistic UI (Phase 2): reserve a share_id + pending row and return the
+  /// share info IMMEDIATELY, then compress/encrypt/upload in the background.
+  /// The heavy work never blocks the "Seal" tap → ShareScreen navigation.
+  /// The key is generated up front so the link is valid instantly and the
+  /// background task encrypts with the same key.
+  Future<CapsuleShareInfo> reserveCapsule({
     required String mediaPath,
     required String mimeType,
     required int durationMs,
+    required List<String> photoPaths,
     required double latitude,
     required double longitude,
     required DateTime unlockTime,
     required String creatorId,
+    String? note,
+    int? coverPhotoIndex,
   }) async {
     isCreating = true;
     notifyListeners();
     try {
-      final compressedPath = await VideoService.compress(mediaPath);
-      final mediaBytes = await File(compressedPath).readAsBytes();
-      final encryption = await CryptoService.encryptAndUpload(
-        mediaBytes: mediaBytes,
-        mimeType: mimeType,
-        durationMs: durationMs,
-        creatorId: creatorId,
-      );
+      final keyUrlSafe = await CryptoService.generateKeyUrlSafe();
 
       String? shareId;
+      String? capsuleId;
       var attempts = 0;
-      while (shareId == null && attempts < AppConstants.shareIdMaxRetries) {
+      while (capsuleId == null && attempts < AppConstants.shareIdMaxRetries) {
         final candidate = CryptoService.generateShareId();
         try {
-          await SupabaseService.insertCapsule(
+          capsuleId = await SupabaseService.insertPendingCapsule(
             creatorId: creatorId,
             shareId: candidate,
-            encryptedPayload: encryption.encryptedPayloadBase64,
             latitude: latitude,
             longitude: longitude,
             unlockTime: unlockTime,
@@ -91,18 +97,72 @@ class CapsuleProvider extends ChangeNotifier {
         }
       }
 
-      if (shareId == null) {
+      if (capsuleId == null || shareId == null) {
         throw const CapsuleException('Could not generate a unique share code. Please try again.');
       }
 
       await SupabaseService.markFreeDropUsed(creatorId);
 
-      return CapsuleShareInfo(
-        shareId: shareId,
-        encryptionKey: encryption.encryptionKeyUrlSafe,
-      );
+      _uploadStates[capsuleId] = CapsuleUploadState.uploading;
+      // Fire-and-forget: the provider is app-scoped, so this outlives the
+      // navigation to ShareScreen / Home.
+      unawaited(_processUploadInBackground(
+        capsuleId: capsuleId,
+        keyUrlSafe: keyUrlSafe,
+        mediaPath: mediaPath,
+        photoPaths: photoPaths,
+        mimeType: mimeType,
+        durationMs: durationMs,
+        creatorId: creatorId,
+        note: note,
+        coverPhotoIndex: coverPhotoIndex,
+      ));
+
+      return CapsuleShareInfo(shareId: shareId, encryptionKey: keyUrlSafe);
     } finally {
       isCreating = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _processUploadInBackground({
+    required String capsuleId,
+    required String keyUrlSafe,
+    required String mediaPath,
+    required List<String> photoPaths,
+    required String mimeType,
+    required int durationMs,
+    required String creatorId,
+    String? note,
+    int? coverPhotoIndex,
+  }) async {
+    try {
+      final compressedPath = await VideoService.compress(mediaPath);
+      final encryptedPayload = await CryptoService.encryptAndUploadCapsule(
+        keyUrlSafe: keyUrlSafe,
+        videoPath: compressedPath,
+        photoPaths: photoPaths,
+        videoMimeType: mimeType,
+        durationMs: durationMs,
+        creatorId: creatorId,
+        note: note,
+        coverPhotoIndex: coverPhotoIndex,
+      );
+      await SupabaseService.updateCapsulePayload(
+        capsuleId: capsuleId,
+        encryptedPayload: encryptedPayload,
+        status: 'ready',
+      );
+      _uploadStates[capsuleId] = CapsuleUploadState.ready;
+    } catch (e) {
+      _uploadStates[capsuleId] = CapsuleUploadState.failed;
+      try {
+        await SupabaseService.updateCapsulePayload(capsuleId: capsuleId, status: 'failed');
+      } catch (_) {
+        // Best-effort — the row simply stays 'pending' if this also fails.
+      }
+      debugPrint('Capsule background upload failed: $e');
+    } finally {
       notifyListeners();
     }
   }
@@ -118,6 +178,7 @@ class CapsuleProvider extends ChangeNotifier {
     required String shareId,
     required String encryptionKey,
     required String recipientUserId,
+    String? fromName,
   }) async {
     isLoadingRadar = true;
     radarPhase = RadarPhase.locating;
@@ -144,6 +205,7 @@ class CapsuleProvider extends ChangeNotifier {
         latitude: capsule.latitude,
         longitude: capsule.longitude,
         encryptionKey: encryptionKey,
+        fromName: fromName,
       );
 
       radarPhase = capsule.isUnlocked ? RadarPhase.searching : RadarPhase.waiting;
@@ -153,6 +215,23 @@ class CapsuleProvider extends ChangeNotifier {
       notifyListeners();
     }
   }
+
+  /// Re-fetches the active capsule (used by RadarScreen to poll while a
+  /// background upload is still 'pending', so the recipient's screen flips to
+  /// the real radar once the upload lands).
+  Future<void> refreshActiveCapsule() async {
+    final capsule = activeCapsule;
+    if (capsule == null) return;
+    final fresh = await SupabaseService.fetchCapsuleByShareId(capsule.shareId);
+    if (fresh == null) return;
+    activeCapsule = fresh;
+    if (!fresh.isPending && radarPhase == RadarPhase.locating) {
+      radarPhase = fresh.isUnlocked ? RadarPhase.searching : RadarPhase.waiting;
+    }
+    notifyListeners();
+  }
+
+  DateTime? _fuzzyZoneEntry;
 
   /// Starts the continuous GPS stream for the Radar UI. Caller (RadarScreen)
   /// MUST call [stopWatchingPosition] in its `dispose()`.
@@ -170,7 +249,25 @@ class CapsuleProvider extends ChangeNotifier {
       );
       distanceMeters = meters;
 
-      if (capsule.isUnlocked && meters <= SystemConfig.instance.unlockProximityMeters) {
+      // Fuzzy unlocking: track how long we've stayed within the loose zone.
+      // If the device sits inside it long enough, allow the unlock even if
+      // GPS never reaches the tight proximity (defeats GPS bounce near
+      // buildings).
+      final inFuzzyZone = meters <= AppConstants.fuzzyUnlockZoneMeters;
+      if (inFuzzyZone) {
+        _fuzzyZoneEntry ??= DateTime.now();
+      } else {
+        _fuzzyZoneEntry = null;
+      }
+      final fuzzyElapsed = _fuzzyZoneEntry == null
+          ? Duration.zero
+          : DateTime.now().difference(_fuzzyZoneEntry!);
+      final fuzzyUnlockAllowed =
+          inFuzzyZone && fuzzyElapsed >= AppConstants.fuzzyUnlockStableDuration;
+
+      final withinProximity = meters <= SystemConfig.instance.unlockProximityMeters;
+
+      if (capsule.isUnlocked && (withinProximity || fuzzyUnlockAllowed)) {
         if (radarPhase != RadarPhase.unlocked) {
           radarPhase = RadarPhase.unlocked;
           await _decryptActiveCapsule();
@@ -197,12 +294,34 @@ class CapsuleProvider extends ChangeNotifier {
       encryptionKeyUrlSafe: key,
     );
     decryptedMetadata = metadata;
+    decryptedNote = metadata.note;
 
-    final mediaBytes = await CryptoService.decryptMedia(
-      metadata: metadata,
+    decryptedMediaBytes = await CryptoService.decryptBlob(
+      storagePath: metadata.video.storagePath,
       encryptionKeyUrlSafe: key,
     );
-    decryptedMediaBytes = mediaBytes;
+
+    final photos = <Uint8List>[];
+    for (final photo in metadata.photos) {
+      photos.add(await CryptoService.decryptBlob(
+        storagePath: photo.storagePath,
+        encryptionKeyUrlSafe: key,
+      ));
+    }
+    decryptedPhotos = photos;
+
+    // Cache the decrypted content so the Vault can show the cover thumbnail
+    // and replay this memory offline without re-downloading/decrypting.
+    final videoBytes = decryptedMediaBytes;
+    if (videoBytes != null) {
+      await MediaCacheService.store(
+        capsuleId: capsule.id,
+        video: videoBytes,
+        note: metadata.note,
+        photos: photos,
+        coverPhotoIndex: metadata.coverPhotoIndex,
+      );
+    }
 
     final userId = _recipientUserId;
     if (userId != null) {

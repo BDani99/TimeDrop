@@ -28,6 +28,20 @@ class AppConstants {
   /// Free tier: one capsule before requiring Premium.
   static const int freeDropLimit = 1;
 
+  /// Content limits for a capsule (Drop Engine phase 1).
+  static const int maxCapsulePhotos = 3;
+  static const int maxNoteLength = 250;
+
+  /// Fuzzy unlocking (radar phase 3): if the device stays within
+  /// [fuzzyUnlockZoneMeters] continuously for [fuzzyUnlockStableDuration],
+  /// allow the unlock even if GPS never quite reaches the tight proximity —
+  /// avoids frustration from GPS bounce near buildings.
+  static const double fuzzyUnlockZoneMeters = 50;
+  static const Duration fuzzyUnlockStableDuration = Duration(minutes: 5);
+
+  /// Distance under which the radar enters its "closing in" phase.
+  static const double radarClosingMeters = 50;
+
   /// Premium monthly allowances (PaywallScreen copy).
   static const int premiumMonthlyVideoLimit = 3;
   static const int premiumMonthlyPhotoLimit = 10;

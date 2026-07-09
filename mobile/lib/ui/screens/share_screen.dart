@@ -11,14 +11,24 @@ import '../widgets/primary_button.dart';
 /// "Moment Sealed" confirmation screen shown right after a capsule is
 /// created — shows the share code + lets the sender copy/share the link.
 class ShareScreen extends StatelessWidget {
-  const ShareScreen({super.key, required this.shareId, required this.encryptionKey});
+  const ShareScreen({
+    super.key,
+    required this.shareId,
+    required this.encryptionKey,
+    this.fromName,
+  });
 
   final String shareId;
   final String encryptionKey;
+  final String? fromName;
 
   @override
   Widget build(BuildContext context) {
-    final url = ShareService.buildShareUrl(shareId: shareId, encryptionKey: encryptionKey);
+    final url = ShareService.buildShareUrl(
+      shareId: shareId,
+      encryptionKey: encryptionKey,
+      fromName: fromName,
+    );
     return Scaffold(
       backgroundColor: AppColors.surface,
       body: SafeArea(
@@ -30,7 +40,7 @@ class ShareScreen extends StatelessWidget {
               const Icon(Icons.check_circle, color: AppColors.primary, size: 72),
               const SizedBox(height: AppSpacing.md),
               Text(
-                'Memory Sealed',
+                'Your capsule is sealed!',
                 style: AppTypography.headlineLg,
                 textAlign: TextAlign.center,
               ),

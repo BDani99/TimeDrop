@@ -9,6 +9,7 @@ class CapsuleModel {
     required this.longitude,
     required this.unlockTime,
     required this.createdAt,
+    this.status = 'ready',
     this.encryptedPayload,
   });
 
@@ -18,9 +19,15 @@ class CapsuleModel {
   final double longitude;
   final DateTime unlockTime;
   final DateTime createdAt;
+
+  /// Upload lifecycle: 'pending' (background upload in flight), 'ready', or
+  /// 'failed'. Optimistic UI inserts the row 'pending' before the encrypted
+  /// payload exists.
+  final String status;
   final String? encryptedPayload;
 
   bool get isUnlocked => DateTime.now().toUtc().isAfter(unlockTime.toUtc());
+  bool get isPending => status == 'pending';
 
   factory CapsuleModel.fromJson(Map<String, dynamic> json) {
     return CapsuleModel(
@@ -30,6 +37,7 @@ class CapsuleModel {
       longitude: (json['longitude'] as num).toDouble(),
       unlockTime: DateTime.parse(json['unlock_time'] as String),
       createdAt: DateTime.parse(json['created_at'] as String),
+      status: json['status'] as String? ?? 'ready',
       encryptedPayload: json['encrypted_payload'] as String?,
     );
   }

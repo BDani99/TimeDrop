@@ -32,6 +32,8 @@
 	<string>TimeDrop needs microphone access to record audio with your video memory.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>TimeDrop needs your location to place a memory where it happened, and to help you find memories left for you nearby.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>TimeDrop needs access to your photos so you can attach pictures to a memory.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

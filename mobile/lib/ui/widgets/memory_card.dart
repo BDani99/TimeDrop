@@ -12,12 +12,16 @@ class MemoryCard extends StatelessWidget {
     super.key,
     required this.shareCode,
     required this.unlockTime,
+    this.status = 'ready',
   });
 
   final String shareCode;
   final DateTime unlockTime;
+  final String status;
 
   String get _relativeText {
+    if (status == 'pending') return 'Uploading…';
+    if (status == 'failed') return 'Upload failed';
     final now = DateTime.now();
     if (!unlockTime.isAfter(now)) return 'Ready to open';
     final diff = unlockTime.difference(now);

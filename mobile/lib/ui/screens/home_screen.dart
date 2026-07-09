@@ -12,8 +12,8 @@ import '../widgets/app_snackbar.dart';
 import '../widgets/memory_card.dart';
 import '../widgets/primary_button.dart';
 import 'camera_screen.dart';
-import 'gallery_screen.dart';
 import 'settings_screen.dart';
+import 'vault_screen.dart';
 
 /// Home / dashboard: CTA to start a new capsule + a simple list of the
 /// user's previously-sent capsules (no "vault"/discovery screen — out of
@@ -68,11 +68,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.photo_library_outlined, color: AppColors.onSurfaceVariant),
-                    tooltip: 'Gallery',
+                    icon: const Icon(Icons.inventory_2_outlined, color: AppColors.onSurfaceVariant),
+                    tooltip: 'Vault',
                     onPressed: () => Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => const GalleryScreen()),
+                      MaterialPageRoute(builder: (_) => const VaultScreen()),
                     ),
                   ),
                   IconButton(
@@ -125,7 +125,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 Column(
                   children: [
                     for (final capsule in _capsules) ...[
-                      MemoryCard(shareCode: capsule.shareId, unlockTime: capsule.unlockTime),
+                      MemoryCard(
+                        shareCode: capsule.shareId,
+                        unlockTime: capsule.unlockTime,
+                        status: capsule.status,
+                      ),
                       const SizedBox(height: AppSpacing.sm),
                     ],
                   ],

@@ -105,6 +105,7 @@ class _MainRouterState extends State<MainRouter> with WidgetsBindingObserver {
         key: ValueKey('radar-${link.shareId}'),
         shareId: link.shareId,
         encryptionKey: link.encryptionKey,
+        fromName: link.fromName,
       );
     }
 

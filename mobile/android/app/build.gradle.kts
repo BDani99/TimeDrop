@@ -6,7 +6,9 @@ plugins {
 
 android {
     namespace = "com.timedrop.timedrop_mobile"
-    compileSdk = flutter.compileSdkVersion
+    // Several plugins (camera, geolocator, image_picker, video_player, …)
+    // require compiling against SDK 36; geocoding needs 34+. 36 satisfies all.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

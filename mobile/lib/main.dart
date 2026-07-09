@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import 'core/theme/app_theme.dart';
 import 'providers/auth_provider.dart';
 import 'providers/capsule_provider.dart';
-import 'providers/gallery_provider.dart';
+import 'providers/vault_provider.dart';
 import 'providers/payment_provider.dart';
 import 'providers/settings_provider.dart';
 import 'services/supabase_service.dart';
@@ -25,7 +25,7 @@ class TimeDropApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => CapsuleProvider()),
-        ChangeNotifierProvider(create: (_) => GalleryProvider()),
+        ChangeNotifierProvider(create: (_) => VaultProvider()),
         ChangeNotifierProvider(create: (_) => PaymentProvider()..initialize()),
         ChangeNotifierProvider(create: (_) => SettingsProvider()),
       ],
