@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/config/system_config.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/errors/app_exception.dart';
 import '../../core/errors/error_mapper.dart';
@@ -49,6 +50,11 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
   Position? _position;
   bool _isLoadingLocation = true;
   Object? _locationError;
+
+  /// The location where the capsule will actually be hidden. Seeded from GPS
+  /// but refined as the user pans the map under the fixed centre pin.
+  LatLng? _selectedLatLng;
+  final _mapController = MapController();
   DateTime? _unlockTime;
   final _noteController = TextEditingController();
   final _nameController = TextEditingController();
@@ -68,6 +74,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
   void dispose() {
     _noteController.dispose();
     _nameController.dispose();
+    _mapController.dispose();
     super.dispose();
   }
 
@@ -78,10 +85,48 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
     if (prefill.isNotEmpty) _nameController.text = prefill;
   }
 
-  Future<void> _pickPhotos() async {
+  Future<void> _addPhoto() async {
     if (_photoPaths.length >= AppConstants.maxCapsulePhotos) return;
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: AppColors.surfaceContainerLowest,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: AppRadii.lgRadius.topLeft),
+      ),
+      builder: (_) => const _PhotoSourceSheet(),
+    );
+    if (source == null) return;
+    // Taking a photo is the primary path; the gallery is the secondary option.
+    if (source == ImageSource.camera) {
+      await _captureFromCamera();
+    } else {
+      await _pickFromGallery();
+    }
+  }
+
+  Future<void> _captureFromCamera() async {
     try {
-      final picked = await ImagePicker().pickMultiImage(limit: AppConstants.maxCapsulePhotos);
+      final image = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.rear,
+      );
+      if (image == null || !mounted) return;
+      setState(() {
+        if (_photoPaths.length < AppConstants.maxCapsulePhotos) {
+          _photoPaths.add(image.path);
+        }
+        _coverPhotoIndex ??= 0;
+      });
+    } catch (e) {
+      if (mounted) AppSnackbar.showError(context, e);
+    }
+  }
+
+  Future<void> _pickFromGallery() async {
+    try {
+      final remaining = AppConstants.maxCapsulePhotos - _photoPaths.length;
+      if (remaining <= 0) return;
+      final picked = await ImagePicker().pickMultiImage(limit: remaining);
       if (picked.isEmpty || !mounted) return;
       setState(() {
         for (final image in picked) {
@@ -122,6 +167,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
       if (!mounted) return;
       setState(() {
         _position = position;
+        _selectedLatLng = LatLng(position.latitude, position.longitude);
         _isLoadingLocation = false;
       });
     } catch (e) {
@@ -162,6 +208,9 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
   Future<void> _seal() async {
     final position = _position;
     final unlockTime = _unlockTime;
+    // Prefer the map-refined location; fall back to the raw GPS fix.
+    final chosen = _selectedLatLng ??
+        (position == null ? null : LatLng(position.latitude, position.longitude));
     if (position == null) {
       AppSnackbar.showError(
         context,
@@ -191,7 +240,10 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
     final authProvider = context.read<AuthProvider>();
 
     try {
-      paymentProvider.requireCanCreateCapsule(freeDropUsed: settingsProvider.freeDropUsed);
+      paymentProvider.requireCanCreateCapsule(
+        dropsUsed: settingsProvider.freeDropsUsed,
+        freeDropLimit: SystemConfig.instance.freeDropLimit,
+      );
     } on PaymentException {
       if (!mounted) return;
       Navigator.push(context, MaterialPageRoute(builder: (_) => const PaywallScreen()));
@@ -214,8 +266,8 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
         photoPaths: List<String>.from(_photoPaths),
         note: _noteController.text,
         coverPhotoIndex: _coverPhotoIndex,
-        latitude: position.latitude,
-        longitude: position.longitude,
+        latitude: chosen!.latitude,
+        longitude: chosen.longitude,
         unlockTime: unlockTime,
         creatorId: userId,
       );
@@ -264,33 +316,57 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
                     ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
                     : _position == null
                         ? _LocationErrorRetry(error: _locationError, onRetry: _loadLocation)
-                        : FlutterMap(
-                        options: MapOptions(
-                          initialCenter: LatLng(_position!.latitude, _position!.longitude),
-                          initialZoom: 16,
-                          interactionOptions:
-                              const InteractionOptions(flags: InteractiveFlag.none),
-                        ),
-                        children: [
-                          TileLayer(
-                            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                            userAgentPackageName: 'com.timedrop.app',
-                          ),
-                          MarkerLayer(
-                            markers: [
-                              Marker(
-                                point: LatLng(_position!.latitude, _position!.longitude),
-                                child: const Icon(
-                                  Icons.location_pin,
-                                  color: AppColors.primary,
-                                  size: 40,
+                        : Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              FlutterMap(
+                                mapController: _mapController,
+                                options: MapOptions(
+                                  initialCenter: _selectedLatLng ??
+                                      LatLng(_position!.latitude, _position!.longitude),
+                                  initialZoom: 16,
+                                  interactionOptions: const InteractionOptions(
+                                    flags: InteractiveFlag.drag |
+                                        InteractiveFlag.pinchZoom |
+                                        InteractiveFlag.flingAnimation |
+                                        InteractiveFlag.doubleTapZoom,
+                                  ),
+                                  // The centre of the map is the chosen spot; the
+                                  // pin below is fixed to the centre and the map
+                                  // pans underneath it.
+                                  onPositionChanged: (camera, hasGesture) {
+                                    _selectedLatLng = camera.center;
+                                  },
+                                ),
+                                children: [
+                                  TileLayer(
+                                    urlTemplate:
+                                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                    userAgentPackageName: 'com.timedrop.app',
+                                  ),
+                                ],
+                              ),
+                              // Fixed centre pin. Offset up by half its height so
+                              // its tip points at the exact map centre. IgnorePointer
+                              // so map gestures pass straight through.
+                              const IgnorePointer(
+                                child: Padding(
+                                  padding: EdgeInsets.only(bottom: 40),
+                                  child: Icon(
+                                    Icons.location_pin,
+                                    color: AppColors.primary,
+                                    size: 40,
+                                  ),
                                 ),
                               ),
                             ],
                           ),
-                        ],
-                      ),
               ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              'Drag the map to place the pin exactly where you want it.',
+              style: AppTypography.labelSm.copyWith(color: AppColors.onSurfaceVariant),
             ),
             const SizedBox(height: AppSpacing.lg),
             Text('When to open it', style: AppTypography.headlineMd),
@@ -331,7 +407,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
             _PhotoStrip(
               paths: _photoPaths,
               coverIndex: _coverPhotoIndex,
-              onAdd: _pickPhotos,
+              onAdd: _addPhoto,
               onRemove: _removePhoto,
               onSetCover: _setCover,
             ),
@@ -384,6 +460,111 @@ class _LocationErrorRetry extends StatelessWidget {
               TextButton(onPressed: openAppSettings, child: const Text('Open Settings')),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom sheet for choosing how to attach a photo — taking one is the
+/// primary action, the gallery is the secondary option. Returns the chosen
+/// [ImageSource] (or null if dismissed).
+class _PhotoSourceSheet extends StatelessWidget {
+  const _PhotoSourceSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          AppSpacing.sm,
+          AppSpacing.md,
+          AppSpacing.md,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.outlineVariant,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Text('Add a photo', style: AppTypography.headlineMd),
+            const SizedBox(height: AppSpacing.md),
+            _PhotoSourceTile(
+              icon: Icons.photo_camera_rounded,
+              label: 'Take a photo',
+              subtitle: 'Capture the moment now',
+              emphasized: true,
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            _PhotoSourceTile(
+              icon: Icons.photo_library_outlined,
+              label: 'Choose from gallery',
+              subtitle: 'Pick an existing photo',
+              emphasized: false,
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PhotoSourceTile extends StatelessWidget {
+  const _PhotoSourceTile({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.emphasized,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final bool emphasized;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = emphasized ? AppColors.onPrimary : AppColors.onSurface;
+    final subFg = emphasized ? AppColors.onPrimary.withValues(alpha: 0.8) : AppColors.onSurfaceVariant;
+    return InkWell(
+      borderRadius: AppRadii.mdRadius,
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        decoration: BoxDecoration(
+          color: emphasized ? AppColors.primary : AppColors.surfaceContainerLow,
+          borderRadius: AppRadii.mdRadius,
+          border: emphasized ? null : Border.all(color: AppColors.outlineVariant),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: fg),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: AppTypography.labelMd.copyWith(color: fg)),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: AppTypography.labelSm.copyWith(color: subFg)),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

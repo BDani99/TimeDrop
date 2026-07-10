@@ -11,6 +11,7 @@ class CapsuleModel {
     required this.createdAt,
     this.status = 'ready',
     this.encryptedPayload,
+    this.city,
   });
 
   final String id;
@@ -20,6 +21,10 @@ class CapsuleModel {
   final DateTime unlockTime;
   final DateTime createdAt;
 
+  /// Reverse-geocoded drop-location label (cached); null if unknown/offline.
+  /// Shown as the card title on the sender's Home screen.
+  final String? city;
+
   /// Upload lifecycle: 'pending' (background upload in flight), 'ready', or
   /// 'failed'. Optimistic UI inserts the row 'pending' before the encrypted
   /// payload exists.
@@ -28,6 +33,20 @@ class CapsuleModel {
 
   bool get isUnlocked => DateTime.now().toUtc().isAfter(unlockTime.toUtc());
   bool get isPending => status == 'pending';
+
+  /// Returns a copy with the [city] label filled in (used after a lazy
+  /// reverse-geocode backfill on the Home screen).
+  CapsuleModel copyWithCity(String city) => CapsuleModel(
+        id: id,
+        shareId: shareId,
+        latitude: latitude,
+        longitude: longitude,
+        unlockTime: unlockTime,
+        createdAt: createdAt,
+        status: status,
+        encryptedPayload: encryptedPayload,
+        city: city,
+      );
 
   factory CapsuleModel.fromJson(Map<String, dynamic> json) {
     return CapsuleModel(
@@ -39,6 +58,7 @@ class CapsuleModel {
       createdAt: DateTime.parse(json['created_at'] as String),
       status: json['status'] as String? ?? 'ready',
       encryptedPayload: json['encrypted_payload'] as String?,
+      city: json['city'] as String?,
     );
   }
 }

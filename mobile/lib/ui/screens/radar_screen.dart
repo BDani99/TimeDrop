@@ -119,12 +119,14 @@ class _RadarScreenState extends State<RadarScreen> {
     });
   }
 
-  /// Warm "heatmap" background: cool cream far away → warm peach as you close.
+  /// Warm "heatmap" background: cream far away → soft apricot as you close.
+  /// Uses the on-brand [AppColors.secondaryContainer] rather than the saturated
+  /// primary container so the shift stays within the Golden Hour palette.
   Color _heatColor(double? distance) {
     if (distance == null) return AppColors.surface;
     final zone = SystemConfig.instance.radarZoneRadiusMeters;
     final t = (1 - (distance / zone)).clamp(0.0, 1.0);
-    return Color.lerp(AppColors.surface, AppColors.primaryContainer, t * 0.7)!;
+    return Color.lerp(AppColors.surface, AppColors.secondaryContainer, t)!;
   }
 
   /// Exit affordance. From the Gallery it pops back; as the recipient-clipboard
@@ -156,10 +158,6 @@ class _RadarScreenState extends State<RadarScreen> {
               icon: Icon(canPop ? Icons.arrow_back : Icons.close),
               onPressed: _exit,
             ),
-            actions: [
-              if (!canPop)
-                TextButton(onPressed: _exit, child: const Text('Explore the app')),
-            ],
           ),
           body: SafeArea(
             child: PermissionGate(

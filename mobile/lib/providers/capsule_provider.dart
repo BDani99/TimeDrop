@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
@@ -9,10 +10,12 @@ import '../core/errors/app_exception.dart';
 import '../models/capsule_metadata.dart';
 import '../models/capsule_model.dart';
 import '../services/crypto_service.dart';
+import '../services/geocoding_service.dart';
 import '../services/geolocation_service.dart';
 import '../services/media_cache_service.dart';
 import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
+import '../services/upload_queue_service.dart';
 import '../services/video_service.dart';
 
 enum RadarPhase { locating, waiting, searching, unlocked }
@@ -51,6 +54,18 @@ class CapsuleProvider extends ChangeNotifier {
   final Map<String, CapsuleUploadState> _uploadStates = {};
   CapsuleUploadState uploadStateFor(String capsuleId) =>
       _uploadStates[capsuleId] ?? CapsuleUploadState.ready;
+
+  /// Bumped whenever the set of sent capsules meaningfully changes: a new
+  /// capsule is reserved, or a background upload reaches a terminal state
+  /// (ready/failed). Screens that hold their own fetched list (e.g. HomeScreen)
+  /// listen for changes to this to re-fetch, so the UI reflects a completed
+  /// upload without a manual pull-to-refresh.
+  int capsulesChangedTick = 0;
+
+  void _bumpCapsulesChanged() {
+    capsulesChangedTick++;
+    notifyListeners();
+  }
 
   /// Optimistic UI (Phase 2): reserve a share_id + pending row and return the
   /// share info IMMEDIATELY, then compress/encrypt/upload in the background.
@@ -101,13 +116,16 @@ class CapsuleProvider extends ChangeNotifier {
         throw const CapsuleException('Could not generate a unique share code. Please try again.');
       }
 
-      await SupabaseService.markFreeDropUsed(creatorId);
+      await SupabaseService.incrementFreeDropsUsed();
 
       _uploadStates[capsuleId] = CapsuleUploadState.uploading;
-      // Fire-and-forget: the provider is app-scoped, so this outlives the
-      // navigation to ShareScreen / Home.
-      unawaited(_processUploadInBackground(
+
+      // Persist the job (and durable copies of the media) BEFORE kicking off
+      // the upload, so it can be resumed if the app is killed mid-upload. The
+      // background task reads from the durable copies, not the temp recording.
+      final job = await UploadQueueService.enqueue(
         capsuleId: capsuleId,
+        shareId: shareId,
         keyUrlSafe: keyUrlSafe,
         mediaPath: mediaPath,
         photoPaths: photoPaths,
@@ -116,54 +134,133 @@ class CapsuleProvider extends ChangeNotifier {
         creatorId: creatorId,
         note: note,
         coverPhotoIndex: coverPhotoIndex,
-      ));
+      );
+
+      // Fire-and-forget: the provider is app-scoped, so this outlives the
+      // navigation to ShareScreen / Home.
+      unawaited(_runUpload(job, keyUrlSafe));
+
+      // Best-effort reverse-geocode of the drop location for the Home card
+      // title. Non-blocking; Home also backfills any that miss this.
+      unawaited(_setSentCityBestEffort(capsuleId, latitude, longitude));
 
       return CapsuleShareInfo(shareId: shareId, encryptionKey: keyUrlSafe);
     } finally {
       isCreating = false;
-      notifyListeners();
+      // A new pending capsule now exists — let HomeScreen pick it up.
+      _bumpCapsulesChanged();
     }
   }
 
-  Future<void> _processUploadInBackground({
-    required String capsuleId,
-    required String keyUrlSafe,
-    required String mediaPath,
-    required List<String> photoPaths,
-    required String mimeType,
-    required int durationMs,
-    required String creatorId,
-    String? note,
-    int? coverPhotoIndex,
-  }) async {
+  /// Re-drives every persisted upload job left over from a previous session
+  /// (app was killed mid-upload). Call once at app start, after the provider
+  /// and Supabase session exist. Jobs whose media no longer exists (and whose
+  /// key was lost) are marked `failed` so the user sees a retryable state
+  /// rather than an eternal "Uploading…".
+  Future<void> resumePendingUploads() async {
+    final jobs = await UploadQueueService.pending();
+    for (final job in jobs) {
+      final key = await UploadQueueService.keyFor(job.capsuleId);
+      final mediaExists = await File(job.mediaPath).exists();
+      if (key == null || !mediaExists) {
+        _uploadStates[job.capsuleId] = CapsuleUploadState.failed;
+        await _safeMarkFailed(job.capsuleId);
+        continue;
+      }
+      _uploadStates[job.capsuleId] = CapsuleUploadState.uploading;
+      unawaited(_runUpload(job, key));
+    }
+    if (jobs.isNotEmpty) _bumpCapsulesChanged();
+  }
+
+  /// Manually retries a previously-failed upload from its persisted job.
+  Future<void> retryUpload(String capsuleId) async {
+    final jobs = await UploadQueueService.pending();
+    UploadJob? job;
+    for (final j in jobs) {
+      if (j.capsuleId == capsuleId) {
+        job = j;
+        break;
+      }
+    }
+    final key = job == null ? null : await UploadQueueService.keyFor(capsuleId);
+    if (job == null || key == null || !await File(job.mediaPath).exists()) {
+      // Nothing left to retry with — leave it failed and drop the dead job.
+      _uploadStates[capsuleId] = CapsuleUploadState.failed;
+      await UploadQueueService.remove(capsuleId);
+      _bumpCapsulesChanged();
+      return;
+    }
+    _uploadStates[capsuleId] = CapsuleUploadState.uploading;
+    await SupabaseService.updateCapsulePayload(capsuleId: capsuleId, status: 'pending');
+    _bumpCapsulesChanged();
+    unawaited(_runUpload(job, key));
+  }
+
+  /// Runs (or re-runs) the compress → encrypt → upload → finalize pipeline for
+  /// a persisted [job]. The whole chain is bounded by [AppConstants.uploadTimeout]
+  /// so a stalled network request surfaces as a retryable `failed` state
+  /// instead of hanging on `pending` forever. On success the job (and its
+  /// durable media copies) is removed from the queue.
+  Future<void> _runUpload(UploadJob job, String keyUrlSafe) async {
+    await UploadQueueService.markAttempt(job.capsuleId);
     try {
-      final compressedPath = await VideoService.compress(mediaPath);
-      final encryptedPayload = await CryptoService.encryptAndUploadCapsule(
-        keyUrlSafe: keyUrlSafe,
-        videoPath: compressedPath,
-        photoPaths: photoPaths,
-        videoMimeType: mimeType,
-        durationMs: durationMs,
-        creatorId: creatorId,
-        note: note,
-        coverPhotoIndex: coverPhotoIndex,
-      );
+      final encryptedPayload = await () async {
+        final compressedPath = await VideoService.compress(job.mediaPath);
+        return CryptoService.encryptAndUploadCapsule(
+          keyUrlSafe: keyUrlSafe,
+          videoPath: compressedPath,
+          photoPaths: job.photoPaths,
+          videoMimeType: job.mimeType,
+          durationMs: job.durationMs,
+          creatorId: job.creatorId,
+          note: job.note,
+          coverPhotoIndex: job.coverPhotoIndex,
+        );
+      }()
+          .timeout(AppConstants.uploadTimeout);
+
       await SupabaseService.updateCapsulePayload(
-        capsuleId: capsuleId,
+        capsuleId: job.capsuleId,
         encryptedPayload: encryptedPayload,
         status: 'ready',
       );
-      _uploadStates[capsuleId] = CapsuleUploadState.ready;
+      _uploadStates[job.capsuleId] = CapsuleUploadState.ready;
+      await UploadQueueService.remove(job.capsuleId);
     } catch (e) {
-      _uploadStates[capsuleId] = CapsuleUploadState.failed;
-      try {
-        await SupabaseService.updateCapsulePayload(capsuleId: capsuleId, status: 'failed');
-      } catch (_) {
-        // Best-effort — the row simply stays 'pending' if this also fails.
-      }
-      debugPrint('Capsule background upload failed: $e');
+      _uploadStates[job.capsuleId] = CapsuleUploadState.failed;
+      await _safeMarkFailed(job.capsuleId);
+      // The job stays in the queue so the user (or the next launch) can retry.
+      debugPrint('Capsule background upload failed (${job.capsuleId}): $e');
     } finally {
-      notifyListeners();
+      _bumpCapsulesChanged();
+    }
+  }
+
+  /// Best-effort flip of a capsule row to `failed` — swallows its own errors
+  /// (network down, etc.) so it never throws from a catch/cleanup path.
+  Future<void> _safeMarkFailed(String capsuleId) async {
+    try {
+      await SupabaseService.updateCapsulePayload(capsuleId: capsuleId, status: 'failed');
+    } catch (e) {
+      debugPrint('Could not mark capsule $capsuleId failed: $e');
+    }
+  }
+
+  /// Best-effort: reverse-geocode a drop location and persist the city label
+  /// for the Home card title. Swallows all errors (offline / no result).
+  Future<void> _setSentCityBestEffort(
+    String capsuleId,
+    double latitude,
+    double longitude,
+  ) async {
+    try {
+      final city = await GeocodingService.cityFor(latitude, longitude);
+      if (city == null || city.isEmpty) return;
+      await SupabaseService.updateSentCapsuleCity(capsuleId: capsuleId, city: city);
+      _bumpCapsulesChanged();
+    } catch (e) {
+      debugPrint('Could not set city for capsule $capsuleId: $e');
     }
   }
 
@@ -265,7 +362,16 @@ class CapsuleProvider extends ChangeNotifier {
       final fuzzyUnlockAllowed =
           inFuzzyZone && fuzzyElapsed >= AppConstants.fuzzyUnlockStableDuration;
 
-      final withinProximity = meters <= SystemConfig.instance.unlockProximityMeters;
+      // Accuracy-aware proximity: a consumer GPS fix has a ±accuracy radius, so
+      // standing exactly on the spot commonly reads e.g. "16 m". Treat the
+      // closest the device could plausibly be (meters − accuracy) against the
+      // threshold, capping the accuracy bonus so a poor fix can't unlock from
+      // far away.
+      final threshold = SystemConfig.instance.unlockProximityMeters;
+      final accuracyBonus =
+          position.accuracy.clamp(0.0, AppConstants.maxGpsAccuracyBonusMeters);
+      final withinProximity =
+          meters <= threshold || (meters - accuracyBonus) <= threshold;
 
       if (capsule.isUnlocked && (withinProximity || fuzzyUnlockAllowed)) {
         if (radarPhase != RadarPhase.unlocked) {

@@ -14,12 +14,23 @@ class SystemConfig {
   double radarZoneRadiusMeters = AppConstants.radarZoneRadiusMeters;
   double unlockProximityMeters = AppConstants.unlockProximityMeters;
 
-  void apply({double? radarZoneRadiusMeters, double? unlockProximityMeters}) {
+  /// How many free drops each user gets before the paywall. Server-tunable
+  /// via the `free_drop_limit` system setting.
+  int freeDropLimit = AppConstants.freeDropLimit;
+
+  void apply({
+    double? radarZoneRadiusMeters,
+    double? unlockProximityMeters,
+    double? freeDropLimit,
+  }) {
     if (radarZoneRadiusMeters != null && radarZoneRadiusMeters > 0) {
       this.radarZoneRadiusMeters = radarZoneRadiusMeters;
     }
     if (unlockProximityMeters != null && unlockProximityMeters > 0) {
       this.unlockProximityMeters = unlockProximityMeters;
+    }
+    if (freeDropLimit != null && freeDropLimit >= 0) {
+      this.freeDropLimit = freeDropLimit.round();
     }
   }
 }

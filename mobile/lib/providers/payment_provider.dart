@@ -111,9 +111,9 @@ class PaymentProvider extends ChangeNotifier {
     }
   }
 
-  void requireCanCreateCapsule({required bool freeDropUsed}) {
-    if (freeDropUsed && !isPremium) {
-      throw const PaymentException('Your free memory has been used — upgrade to send more.');
+  void requireCanCreateCapsule({required int dropsUsed, required int freeDropLimit}) {
+    if (dropsUsed >= freeDropLimit && !isPremium) {
+      throw const PaymentException('Your free memories have been used — upgrade to send more.');
     }
   }
 }

@@ -13,6 +13,7 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   bool get freeDropUsed => settings?.freeDropUsed ?? false;
+  int get freeDropsUsed => settings?.freeDropsUsed ?? 0;
   bool get onboardingCompleted => settings?.onboardingCompleted ?? false;
   String? get displayName => settings?.displayName;
 
@@ -22,9 +23,12 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> markFreeDropUsed(String userId) async {
-    await SupabaseService.markFreeDropUsed(userId);
-    settings = settings?.copyWith(freeDropUsed: true);
+  Future<void> incrementFreeDropsUsed() async {
+    await SupabaseService.incrementFreeDropsUsed();
+    settings = settings?.copyWith(
+      freeDropUsed: true,
+      freeDropsUsed: freeDropsUsed + 1,
+    );
     notifyListeners();
   }
 

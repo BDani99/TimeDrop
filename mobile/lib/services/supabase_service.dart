@@ -51,11 +51,12 @@ class SupabaseService {
     }
   }
 
-  static Future<void> markFreeDropUsed(String userId) async {
+  /// Atomically increments the current user's free-drop counter after a
+  /// successful drop. Backed by the `increment_free_drops_used` RPC, which is
+  /// scoped to `auth.uid()`.
+  static Future<void> incrementFreeDropsUsed() async {
     try {
-      await client
-          .from(SupabaseConstants.userSettingsTable)
-          .update({'free_drop_used': true}).eq('user_id', userId);
+      await client.rpc(SupabaseConstants.incrementFreeDropsUsedRpc);
     } catch (e) {
       throw CapsuleException('Could not update your account state.', cause: e);
     }
@@ -193,6 +194,24 @@ class SupabaseService {
           .toList();
     } catch (e) {
       throw CapsuleException('Could not load your sent memories.', cause: e);
+    }
+  }
+
+  /// Persists a reverse-geocoded city label for a sent capsule (best effort —
+  /// Home fills this lazily so it isn't recomputed each load). Mirrors
+  /// [updateReceivedCapsuleCity]; relies on the `time_capsules_update_own`
+  /// RLS policy (creator-scoped update).
+  static Future<void> updateSentCapsuleCity({
+    required String capsuleId,
+    required String city,
+  }) async {
+    try {
+      await client
+          .from(SupabaseConstants.timeCapsulesTable)
+          .update({'city': city})
+          .eq('id', capsuleId);
+    } catch (e) {
+      throw CapsuleException('Could not update your capsule.', cause: e);
     }
   }
 

@@ -75,7 +75,8 @@ class _CameraBody extends StatefulWidget {
 class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderStateMixin {
   CameraController? _controller;
   List<CameraDescription> _cameras = const [];
-  CameraLensDirection _lensDirection = CameraLensDirection.back;
+  // Open in selfie mode by default — most memories start front-facing.
+  CameraLensDirection _lensDirection = CameraLensDirection.front;
   _FlashState _flash = _FlashState.off;
 
   bool _isRecording = false;
@@ -279,13 +280,6 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
           ),
         ),
 
-        // Live date + GPS watermark (overlay only — not burned into video).
-        Positioned(
-          left: AppSpacing.md,
-          bottom: 120,
-          child: _Watermark(position: _position),
-        ),
-
         SafeArea(
           child: Stack(
             children: [
@@ -308,27 +302,45 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
                   ),
                 ),
 
-              // Micro-copy + record button (bottom-center).
+              // Bottom band: watermark, hint and record button stacked in a
+              // single column so they never overlap (previously the watermark
+              // was pinned to the raw screen edge while the controls used the
+              // SafeArea, so the two collided). Watermark left-aligned above the
+              // centered controls.
               Align(
                 alignment: Alignment.bottomCenter,
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 40),
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    0,
+                    AppSpacing.md,
+                    32,
+                  ),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: _Watermark(position: _position),
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
                       AnimatedOpacity(
                         opacity: _isRecording ? 0 : 1,
                         duration: const Duration(milliseconds: 250),
                         child: Text(
                           'Tap to lock the moment',
+                          textAlign: TextAlign.center,
                           style: AppTypography.labelMd.copyWith(color: Colors.white70),
                         ),
                       ),
                       const SizedBox(height: AppSpacing.sm),
-                      _RecordButton(
-                        isRecording: _isRecording,
-                        progress: _ringController,
-                        onTap: _isRecording ? _stopRecording : _startRecording,
+                      Center(
+                        child: _RecordButton(
+                          isRecording: _isRecording,
+                          progress: _ringController,
+                          onTap: _isRecording ? _stopRecording : _startRecording,
+                        ),
                       ),
                     ],
                   ),

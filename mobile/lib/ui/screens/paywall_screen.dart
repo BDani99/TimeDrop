@@ -275,7 +275,13 @@ class _PlanCard extends StatelessWidget {
             Expanded(
               child: Row(
                 children: [
-                  Text(title, style: AppTypography.headlineMd),
+                  Flexible(
+                    child: Text(
+                      title,
+                      style: AppTypography.headlineMd,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                   if (badge != null) ...[
                     const SizedBox(width: AppSpacing.sm),
                     Container(
@@ -293,6 +299,7 @@ class _PlanCard extends StatelessWidget {
                 ],
               ),
             ),
+            const SizedBox(width: AppSpacing.sm),
             Text(price, style: AppTypography.bodyMd),
           ],
         ),

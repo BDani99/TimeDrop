@@ -28,6 +28,17 @@ class AppConstants {
   /// Free tier: one capsule before requiring Premium.
   static const int freeDropLimit = 1;
 
+  /// Background-upload safety timeouts. Without these, a stalled video
+  /// compression or a hung network request would leave the capsule row stuck
+  /// on `pending` ("Uploading…") forever. On timeout the pipeline surfaces a
+  /// `failed` status (retryable) instead of hanging silently.
+  static const Duration videoCompressTimeout = Duration(seconds: 90);
+  static const Duration uploadTimeout = Duration(minutes: 3);
+
+  /// Max automatic attempts for a background upload before it's left as
+  /// `failed` for the user to retry manually.
+  static const int uploadMaxAttempts = 3;
+
   /// Content limits for a capsule (Drop Engine phase 1).
   static const int maxCapsulePhotos = 3;
   static const int maxNoteLength = 250;
@@ -37,7 +48,13 @@ class AppConstants {
   /// allow the unlock even if GPS never quite reaches the tight proximity —
   /// avoids frustration from GPS bounce near buildings.
   static const double fuzzyUnlockZoneMeters = 50;
-  static const Duration fuzzyUnlockStableDuration = Duration(minutes: 5);
+  static const Duration fuzzyUnlockStableDuration = Duration(minutes: 2);
+
+  /// Max metres of a GPS fix's reported accuracy that may count toward the
+  /// unlock proximity check. Lets a device standing on the spot (but reading
+  /// e.g. "16 m" with ±10 m accuracy) unlock, without letting a very poor fix
+  /// unlock from far away.
+  static const double maxGpsAccuracyBonusMeters = 20;
 
   /// Distance under which the radar enters its "closing in" phase.
   static const double radarClosingMeters = 50;

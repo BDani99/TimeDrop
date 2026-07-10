@@ -236,7 +236,12 @@ class _TimelineView extends StatelessWidget {
           if (vault.waiting.isNotEmpty) ...[
             _SectionLabel('Waiting'),
             for (final item in vault.waiting) ...[
-              _WaitingCard(item: item),
+              _WaitingCard(
+                item: item,
+                // With the full link, tapping reopens the blurred radar so the
+                // recipient can revisit the countdown / map they exited.
+                onTap: item.hasKey ? () => onOpenRadar(item) : null,
+              ),
               const SizedBox(height: AppSpacing.sm),
             ],
             const SizedBox(height: AppSpacing.md),
@@ -486,48 +491,55 @@ class _ReadyCardState extends State<_ReadyCard> with SingleTickerProviderStateMi
   }
 }
 
-/// Waiting: frosted / locked look, no content, sender + city + countdown,
-/// not tappable.
+/// Waiting: frosted / locked look, no content, sender + city + countdown.
+/// Tappable (when the full link is held) to reopen the blurred radar.
 class _WaitingCard extends StatelessWidget {
-  const _WaitingCard({required this.item});
+  const _WaitingCard({required this.item, this.onTap});
   final ReceivedCapsuleModel item;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceContainerHigh.withValues(alpha: 0.7),
-        borderRadius: AppRadii.mdRadius,
-        border: Border.all(color: AppColors.outlineVariant),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            item.hasKey ? Icons.lock_outline : Icons.link_off,
-            color: AppColors.onSurfaceVariant,
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(item.senderLabel, style: AppTypography.labelMd),
-                const SizedBox(height: 2),
-                if (!item.hasKey)
-                  Text(
-                    'Missing the full link',
-                    style: AppTypography.labelSm.copyWith(color: AppColors.error),
-                  )
-                else
-                  DefaultTextStyle(
-                    style: AppTypography.labelSm,
-                    child: CountdownTimer(target: item.unlockTime),
-                  ),
-              ],
+    return InkWell(
+      borderRadius: AppRadii.mdRadius,
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceContainerHigh.withValues(alpha: 0.7),
+          borderRadius: AppRadii.mdRadius,
+          border: Border.all(color: AppColors.outlineVariant),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              item.hasKey ? Icons.lock_outline : Icons.link_off,
+              color: AppColors.onSurfaceVariant,
             ),
-          ),
-        ],
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(item.senderLabel, style: AppTypography.labelMd),
+                  const SizedBox(height: 2),
+                  if (!item.hasKey)
+                    Text(
+                      'Missing the full link',
+                      style: AppTypography.labelSm.copyWith(color: AppColors.error),
+                    )
+                  else
+                    DefaultTextStyle(
+                      style: AppTypography.labelSm,
+                      child: CountdownTimer(target: item.unlockTime),
+                    ),
+                ],
+              ),
+            ),
+            if (item.hasKey)
+              const Icon(Icons.chevron_right, color: AppColors.onSurfaceVariant),
+          ],
+        ),
       ),
     );
   }
@@ -648,13 +660,26 @@ class _MapView extends StatelessWidget {
         ),
       );
     }
-    final center = LatLng(items.first.latitude, items.first.longitude);
+    final points = [for (final i in items) LatLng(i.latitude, i.longitude)];
+    // Frame the actual drops: a single point centers with a city-level zoom;
+    // multiple points fit their bounds (with padding + a maxZoom cap so a
+    // tight cluster doesn't zoom to street level).
+    final MapOptions options = points.length == 1
+        ? MapOptions(initialCenter: points.first, initialZoom: 12)
+        : MapOptions(
+            initialCameraFit: CameraFit.bounds(
+              bounds: LatLngBounds.fromPoints(points),
+              padding: const EdgeInsets.all(56),
+              maxZoom: 13,
+            ),
+          );
     return FlutterMap(
-      options: MapOptions(initialCenter: center, initialZoom: 4),
+      options: options,
       children: [
-        // Dark CartoDB basemap for the "global overview" look.
+        // Light CartoDB "Voyager" basemap — warmer and legible, matching the
+        // app's Golden Hour palette (the dark basemap read as too murky).
         TileLayer(
-          urlTemplate: 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+          urlTemplate: 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
           userAgentPackageName: 'com.timedrop.app',
           retinaMode: RetinaMode.isHighDensity(context),
         ),

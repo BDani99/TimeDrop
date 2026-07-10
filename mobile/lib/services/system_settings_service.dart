@@ -13,6 +13,7 @@ class SystemSettingsService {
       SystemConfig.instance.apply(
         radarZoneRadiusMeters: settings[SupabaseConstants.settingRadarZoneRadius],
         unlockProximityMeters: settings[SupabaseConstants.settingUnlockProximity],
+        freeDropLimit: settings[SupabaseConstants.settingFreeDropLimit],
       );
     } catch (_) {
       // Non-fatal — SystemConfig keeps its AppConstants defaults.

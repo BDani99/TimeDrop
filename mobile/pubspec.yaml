@@ -121,9 +121,13 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # To add assets to your application, add an assets section, like this:
-  assets:
-    - assets/icon/
+  # Note: assets/icon/ holds build-time-only source images for
+  # flutter_launcher_icons + flutter_native_splash (read by path at generation
+  # time), so they are intentionally NOT registered as bundled assets here.
+  #
+  # To add runtime assets to your application, add an assets section, like this:
+  # assets:
+  #   - images/a_dot_burr.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
@@ -160,11 +164,14 @@ flutter_launcher_icons:
   remove_alpha_ios: true
 
 # Native splash screen generation — run: dart run flutter_native_splash:create
+# Uses padded source images (pin centered with transparent margin) so the pin
+# is never cropped: full-bleed art gets clipped at screen edges (and by the
+# Android 12 circular icon mask), hence the extra-padded android_12 variant.
 flutter_native_splash:
   color: "#0D0E10"
-  image: "assets/icon/splash.png"
+  image: "assets/icon/splash_padded.png"
   android_12:
-    image: "assets/icon/splash.png"
+    image: "assets/icon/splash_android12.png"
     color: "#0D0E10"
   android: true
   ios: true

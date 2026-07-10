@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -55,12 +57,18 @@ class _MainRouterState extends State<MainRouter> with WidgetsBindingObserver {
     final auth = context.read<AuthProvider>();
     final settings = context.read<SettingsProvider>();
     final payment = context.read<PaymentProvider>();
+    final capsule = context.read<CapsuleProvider>();
 
     try {
       await auth.bootstrap();
       final userId = auth.userId;
 
       if (userId != null) {
+        // Resume any background uploads stranded by a previous app kill. Fire-
+        // and-forget so it never blocks app start; it re-drives from the
+        // persisted queue using the now-restored auth session.
+        unawaited(capsule.resumePendingUploads());
+
         // Load per-account settings (onboarding + free drop state). Kept
         // non-fatal so a transient settings error doesn't block the app.
         try {
