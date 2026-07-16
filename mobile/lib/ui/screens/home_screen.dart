@@ -14,7 +14,9 @@ import '../../providers/vault_provider.dart';
 import '../../services/geocoding_service.dart';
 import '../../services/supabase_service.dart';
 import '../widgets/app_snackbar.dart';
+import '../widgets/loading/skeleton_box.dart';
 import '../widgets/memory_card.dart';
+import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/primary_button.dart';
 import 'camera_screen.dart';
 import 'settings_screen.dart';
@@ -160,10 +162,10 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: AppSpacing.lg),
               Center(
                 child: PrimaryButton(
-                  label: '+ Leave a Memory',
+                  label: 'Leave a Memory',
                   onPressed: () => Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (_) => const CameraScreen()),
+                    SpringPageRoute(page: const CameraScreen()),
                   ),
                 ),
               ),
@@ -171,7 +173,13 @@ class _HomeScreenState extends State<HomeScreen> {
               if (_isLoading)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
-                  child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+                  child: Column(
+                    children: [
+                      SkeletonMemoryCard(),
+                      SizedBox(height: AppSpacing.sm),
+                      SkeletonMemoryCard(),
+                    ],
+                  ),
                 )
               else if (_capsules.isEmpty)
                 const Padding(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -10,6 +11,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../providers/payment_provider.dart';
 import '../widgets/app_snackbar.dart';
+import '../widgets/glass/glass_panel.dart';
 import '../widgets/primary_button.dart';
 import 'home_screen.dart';
 
@@ -151,85 +153,178 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.surface,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.containerMargin),
-          child: ListView(
-            children: [
-              GestureDetector(
-                onTap: _onTitleTap,
-                child: Text(
-                  "Unlock the Premium Vault to secure your family's digital heirloom forever.",
-                  style: AppTypography.headlineLg,
+      body: ListView(
+        children: [
+          // ── Hero gradient header ────────────────────────────────────────────
+          _PaywallHero(onTitleTap: _onTitleTap),
+
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.containerMargin),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: AppSpacing.md),
+
+                // ── Features ─────────────────────────────────────────────────
+                const _FeatureRow(
+                  icon: Icons.videocam_outlined,
+                  text: 'Video Memories a month',
+                  value: '${AppConstants.premiumMonthlyVideoLimit}',
                 ),
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _FeatureRow(text: '${AppConstants.premiumMonthlyVideoLimit} Video Memories a month'),
-              const _FeatureRow(text: 'Unlimited Photo Drops'),
-              const _FeatureRow(text: 'Permanent Safekeeping'),
-              const SizedBox(height: AppSpacing.lg),
-              _PlanCard(
-                title: 'Yearly',
-                price: AppConstants.yearlyPriceLabel,
-                badge: AppConstants.yearlySavingLabel,
-                selected: payment.selectedPlan == SubscriptionPlan.yearly,
-                onTap: () => payment.selectPlan(SubscriptionPlan.yearly),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              _PlanCard(
-                title: 'Monthly',
-                price: AppConstants.monthlyPriceLabel,
-                selected: payment.selectedPlan == SubscriptionPlan.monthly,
-                onTap: () => payment.selectPlan(SubscriptionPlan.monthly),
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              PrimaryButton(label: 'Subscribe', isLoading: _isPurchasing, onPressed: _purchase),
-              if (widget.isOnboarding) ...[
-                const SizedBox(height: AppSpacing.sm),
-                OutlinedButton(
-                  onPressed: _continueFree,
-                  child: const Text('Continue with 1 free capsule'),
+                const _FeatureRow(
+                  icon: Icons.photo_library_outlined,
+                  text: 'Unlimited Photo Drops',
                 ),
-              ] else ...[
-                const SizedBox(height: AppSpacing.sm),
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Maybe later'),
+                const _FeatureRow(
+                  icon: Icons.lock_outline,
+                  text: 'End-to-End Encrypted',
                 ),
-              ],
-              const SizedBox(height: AppSpacing.sm),
-              TextButton(
-                onPressed: _isRestoring ? null : _restore,
-                child: Text(_isRestoring ? 'Restoring…' : 'Restore Purchases'),
-              ),
-              if (_showBypassField) ...[
+                const _FeatureRow(
+                  icon: Icons.cloud_done_outlined,
+                  text: 'Permanent Safekeeping',
+                ),
                 const SizedBox(height: AppSpacing.lg),
-                TextField(
-                  controller: _bypassController,
-                  obscureText: true,
-                  decoration: const InputDecoration(hintText: 'Reviewer password'),
+
+                // ── Plan cards ────────────────────────────────────────────────
+                _PlanCard(
+                  title: 'Yearly',
+                  price: AppConstants.yearlyPriceLabel,
+                  badge: AppConstants.yearlySavingLabel,
+                  selected: payment.selectedPlan == SubscriptionPlan.yearly,
+                  onTap: () => payment.selectPlan(SubscriptionPlan.yearly),
                 ),
                 const SizedBox(height: AppSpacing.sm),
-                PrimaryButton(label: 'Unlock', onPressed: _submitBypass),
-              ],
-              const SizedBox(height: AppSpacing.lg),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  TextButton(
-                    onPressed: () => _openLink(AppConstants.termsUrl),
-                    child: const Text('Terms of Service'),
+                _PlanCard(
+                  title: 'Monthly',
+                  price: AppConstants.monthlyPriceLabel,
+                  selected: payment.selectedPlan == SubscriptionPlan.monthly,
+                  onTap: () => payment.selectPlan(SubscriptionPlan.monthly),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+
+                // ── CTA ───────────────────────────────────────────────────────
+                PrimaryButton(label: 'Subscribe', isLoading: _isPurchasing, onPressed: _purchase),
+                if (widget.isOnboarding) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  OutlinedButton(
+                    onPressed: _continueFree,
+                    child: const Text('Continue with 1 free capsule'),
                   ),
-                  Text('·', style: AppTypography.labelSm),
+                ] else ...[
+                  const SizedBox(height: AppSpacing.sm),
                   TextButton(
-                    onPressed: () => _openLink(AppConstants.privacyUrl),
-                    child: const Text('Privacy Policy'),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Maybe later'),
                   ),
                 ],
-              ),
-            ],
+                const SizedBox(height: AppSpacing.sm),
+                TextButton(
+                  onPressed: _isRestoring ? null : _restore,
+                  child: Text(_isRestoring ? 'Restoring…' : 'Restore Purchases'),
+                ),
+
+                if (_showBypassField) ...[
+                  const SizedBox(height: AppSpacing.lg),
+                  TextField(
+                    controller: _bypassController,
+                    obscureText: true,
+                    decoration: const InputDecoration(hintText: 'Reviewer password'),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  PrimaryButton(label: 'Unlock', onPressed: _submitBypass),
+                ],
+
+                const SizedBox(height: AppSpacing.lg),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    TextButton(
+                      onPressed: () => _openLink(AppConstants.termsUrl),
+                      child: const Text('Terms of Service'),
+                    ),
+                    Text('·', style: AppTypography.labelSm),
+                    TextButton(
+                      onPressed: () => _openLink(AppConstants.privacyUrl),
+                      child: const Text('Privacy Policy'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.md),
+              ],
+            ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Full-width gradient hero that anchors the paywall emotionally before the
+/// user reads any feature bullets or pricing.
+class _PaywallHero extends StatelessWidget {
+  const _PaywallHero({required this.onTitleTap});
+
+  final VoidCallback onTitleTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final top = MediaQuery.of(context).padding.top;
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.containerMargin,
+        top + AppSpacing.lg,
+        AppSpacing.containerMargin,
+        AppSpacing.xl,
+      ),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary,
+            AppColors.secondaryContainer,
+          ],
         ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Hourglass icon
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(Icons.hourglass_bottom, color: Colors.white, size: 32),
+          )
+              .animate()
+              .scale(begin: const Offset(0.7, 0.7), duration: 500.ms, curve: Curves.easeOutBack),
+          const SizedBox(height: AppSpacing.md),
+          GestureDetector(
+            onTap: onTitleTap,
+            child: Text(
+              'Seal memories\nfor the ones\nyou love.',
+              style: AppTypography.headlineLg.copyWith(
+                color: Colors.white,
+                fontSize: 30,
+                height: 1.25,
+              ),
+            )
+                .animate()
+                .fadeIn(duration: 500.ms, delay: 120.ms)
+                .slideY(begin: 0.1, end: 0, duration: 500.ms, delay: 120.ms),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            'Your moments, encrypted and waiting for the perfect moment to bloom.',
+            style: AppTypography.bodyMd.copyWith(color: Colors.white70),
+          )
+              .animate()
+              .fadeIn(duration: 500.ms, delay: 240.ms),
+        ],
       ),
     );
   }
@@ -252,19 +347,12 @@ class _PlanCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return GlassPanel(
+      padding: const EdgeInsets.all(AppSpacing.md),
       borderRadius: AppRadii.mdRadius,
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.secondaryContainer : AppColors.surfaceContainerLowest,
-          borderRadius: AppRadii.mdRadius,
-          border: Border.all(
-            color: selected ? AppColors.primary : AppColors.outlineVariant,
-            width: selected ? 2 : 1,
-          ),
-        ),
+      child: InkWell(
+        borderRadius: AppRadii.mdRadius,
+        onTap: onTap,
         child: Row(
           children: [
             Icon(
@@ -309,19 +397,48 @@ class _PlanCard extends StatelessWidget {
 }
 
 class _FeatureRow extends StatelessWidget {
-  const _FeatureRow({required this.text});
+  const _FeatureRow({required this.icon, required this.text, this.value});
 
+  final IconData icon;
   final String text;
+  final String? value;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs + 2),
       child: Row(
         children: [
-          const Icon(Icons.check, color: AppColors.primary, size: 20),
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: AppColors.primaryContainer.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: AppColors.primary, size: 18),
+          ),
           const SizedBox(width: AppSpacing.sm),
-          Expanded(child: Text(text, style: AppTypography.bodyMd)),
+          Expanded(
+            child: value != null
+                ? RichText(
+                    text: TextSpan(
+                      style: AppTypography.bodyMd,
+                      children: [
+                        TextSpan(
+                          text: '$value ',
+                          style: AppTypography.bodyMd.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.onSurface,
+                          ),
+                        ),
+                        TextSpan(text: text),
+                      ],
+                    ),
+                  )
+                : Text(text, style: AppTypography.bodyMd),
+          ),
+          const Icon(Icons.check_circle, color: AppColors.primary, size: 18),
         ],
       ),
     );

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/haptics/app_haptics.dart';
 import '../../core/theme/app_typography.dart';
 
 /// Live `DD:HH:MM:SS`-ish countdown to [target]. Shows "Ready to open" once
@@ -18,6 +19,7 @@ class CountdownTimer extends StatefulWidget {
 class _CountdownTimerState extends State<CountdownTimer> {
   Timer? _timer;
   late Duration _remaining;
+  bool _didFireCompleteHaptic = false;
 
   @override
   void initState() {
@@ -25,7 +27,12 @@ class _CountdownTimerState extends State<CountdownTimer> {
     _remaining = widget.target.difference(DateTime.now());
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      setState(() => _remaining = widget.target.difference(DateTime.now()));
+      final next = widget.target.difference(DateTime.now());
+      if (!next.isNegative && next.inSeconds <= 1 && !_didFireCompleteHaptic) {
+        _didFireCompleteHaptic = true;
+        AppHaptics.countdownComplete();
+      }
+      setState(() => _remaining = next);
     });
   }
 

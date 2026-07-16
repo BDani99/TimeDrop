@@ -54,4 +54,13 @@ class GeolocationService {
   }) {
     return Geolocator.distanceBetween(startLat, startLng, endLat, endLng);
   }
+
+  static double bearingDegrees({
+    required double startLat,
+    required double startLng,
+    required double endLat,
+    required double endLng,
+  }) {
+    return Geolocator.bearingBetween(startLat, startLng, endLat, endLng);
+  }
 }

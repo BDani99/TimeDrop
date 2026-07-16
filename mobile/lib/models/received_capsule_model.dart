@@ -16,6 +16,9 @@ class ReceivedCapsuleModel {
     this.encryptionKey,
     this.fromName,
     this.city,
+    this.capsuleCreatedAt,
+    this.unlockedAt,
+    this.viewedAt,
   });
 
   final String id;
@@ -38,6 +41,10 @@ class ReceivedCapsuleModel {
   /// Reverse-geocoded city label (cached); null if unknown/offline.
   final String? city;
 
+  final DateTime? capsuleCreatedAt;
+  final DateTime? unlockedAt;
+  final DateTime? viewedAt;
+
   bool get hasKey => encryptionKey != null;
   bool get isUnlockTimeReached => DateTime.now().toUtc().isAfter(unlockTime.toUtc());
 
@@ -49,6 +56,12 @@ class ReceivedCapsuleModel {
   }
 
   factory ReceivedCapsuleModel.fromJson(Map<String, dynamic> json) {
+    DateTime? parseOptional(String key) {
+      final value = json[key];
+      if (value == null) return null;
+      return DateTime.parse(value as String);
+    }
+
     return ReceivedCapsuleModel(
       id: json['id'] as String,
       capsuleId: json['capsule_id'] as String,
@@ -61,6 +74,9 @@ class ReceivedCapsuleModel {
       encryptionKey: json['encryption_key'] as String?,
       fromName: json['from_name'] as String?,
       city: json['city'] as String?,
+      capsuleCreatedAt: parseOptional('capsule_created_at'),
+      unlockedAt: parseOptional('unlocked_at'),
+      viewedAt: parseOptional('viewed_at'),
     );
   }
 }

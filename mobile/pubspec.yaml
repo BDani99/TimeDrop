@@ -95,6 +95,11 @@ dependencies:
   # Open Terms/Privacy links from the Paywall
   url_launcher: ^6.3.0
 
+  # Premium UX animations & effects
+  flutter_animate: ^4.5.2
+  animated_text_kit: ^4.2.3
+  palette_generator: ^0.3.3+4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -159,19 +164,18 @@ flutter:
 flutter_launcher_icons:
   android: "ic_launcher"
   ios: true
-  image_path_android: "assets/icon/android_icon.png"
-  image_path_ios: "assets/icon/ios_icon.png"
+  image_path_android: "assets/icon/android_icon.jpg"
+  image_path_ios: "assets/icon/ios_icon.jpg"
   remove_alpha_ios: true
 
 # Native splash screen generation — run: dart run flutter_native_splash:create
-# Uses padded source images (pin centered with transparent margin) so the pin
-# is never cropped: full-bleed art gets clipped at screen edges (and by the
-# Android 12 circular icon mask), hence the extra-padded android_12 variant.
 flutter_native_splash:
-  color: "#0D0E10"
-  image: "assets/icon/splash_padded.png"
+  color: "#F1E8DF"
+  image: "assets/icon/splash.jpg"
   android_12:
-    image: "assets/icon/splash_android12.png"
-    color: "#0D0E10"
+    # Extra padding so the circular Android 12 mask doesn't clip the icon.
+    # The icon occupies the inner 60% of the canvas (safe-zone compliant).
+    image: "assets/icon/splash_android12.jpg"
+    color: "#F1E8DF"
   android: true
   ios: true

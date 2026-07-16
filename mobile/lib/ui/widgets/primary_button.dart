@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/haptics/app_haptics.dart';
 import '../../core/theme/app_colors.dart';
 
 /// The app's single pill-shaped CTA button. `ElevatedButton` is already
@@ -12,17 +13,24 @@ class PrimaryButton extends StatelessWidget {
     required this.onPressed,
     this.isLoading = false,
     this.icon,
+    this.enableHaptics = true,
   });
 
   final String label;
   final VoidCallback? onPressed;
   final bool isLoading;
   final IconData? icon;
+  final bool enableHaptics;
+
+  void _handlePress() {
+    if (enableHaptics) AppHaptics.action();
+    onPressed?.call();
+  }
 
   @override
   Widget build(BuildContext context) {
     return ElevatedButton(
-      onPressed: isLoading ? null : onPressed,
+      onPressed: isLoading ? null : (onPressed == null ? null : _handlePress),
       child: isLoading
           ? const SizedBox(
               height: 20,

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/theme/app_colors.dart';
-import '../../../core/theme/app_radii.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
+import '../glass/glass_bottom_sheet.dart';
 import '../primary_button.dart';
 import 'memory_saved_modal.dart';
 
@@ -19,13 +19,9 @@ class PostOpenUpsellSheet extends StatelessWidget {
   const PostOpenUpsellSheet({super.key});
 
   static Future<UpsellResult?> show(BuildContext context) {
-    return showModalBottomSheet<UpsellResult>(
+    return GlassBottomSheet.show<UpsellResult>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppColors.surfaceContainerLowest,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: AppRadii.lgRadius.topLeft),
-      ),
       builder: (_) => const PostOpenUpsellSheet(),
     );
   }
@@ -52,23 +48,27 @@ class PostOpenUpsellSheet extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.md),
           Container(
-            width: 56,
-            height: 56,
+            width: 64,
+            height: 64,
             decoration: const BoxDecoration(
-              color: AppColors.secondaryContainer,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [AppColors.primary, AppColors.secondaryContainer],
+              ),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.auto_awesome, color: AppColors.primary),
+            child: const Icon(Icons.hourglass_bottom, color: Colors.white, size: 30),
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(
-            'Some moments are meant to outlast us.',
+            'This memory will live forever.',
             textAlign: TextAlign.center,
             style: AppTypography.headlineMd,
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
-            'Leave your own mark on the world.',
+            'Now imagine sending one yourself — sealed in time, waiting for the perfect moment to open.',
             textAlign: TextAlign.center,
             style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
           ),

@@ -1,8 +1,9 @@
-# Secrets — .mcp.json embeds a live Supabase personal access token
-# (SUPABASE_ACCESS_TOKEN) with full project management rights. NEVER commit
-# this file. If you need to share the MCP config with a teammate, share the
-# token out-of-band and let them create their own local .mcp.json.
+# Secrets — .mcp.json and .cursor/mcp.json embed a live Supabase personal
+# access token (SUPABASE_ACCESS_TOKEN) with full project management rights.
+# NEVER commit these files. Share the token out-of-band if a teammate needs
+# their own local copy.
 .mcp.json
+.cursor/mcp.json
 *.env
 .env
 .env.*

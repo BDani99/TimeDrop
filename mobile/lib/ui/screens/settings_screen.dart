@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../providers/auth_provider.dart';
 import '../widgets/app_snackbar.dart';
+import '../widgets/glass/glass_panel.dart';
 import '../widgets/primary_button.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -71,43 +73,97 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(AppSpacing.containerMargin),
         children: [
-          Text('Account', style: AppTypography.headlineMd),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            auth.isLinked
-                ? 'Your account is linked and your memories are safely backed up.'
-                : 'You\'re using an anonymous, device-only account. Link Apple or Google to keep your memories safe across devices.',
-            style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
+          // ── Account ────────────────────────────────────────────────────────
+          GlassPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(children: [
+                  const Icon(Icons.person_outline, color: AppColors.primary),
+                  const SizedBox(width: AppSpacing.sm),
+                  Text('Account', style: AppTypography.headlineMd),
+                ]),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  auth.isLinked
+                      ? 'Your account is linked and your memories are safely backed up.'
+                      : 'You\'re using an anonymous, device-only account. Link Apple or Google to keep your memories safe across devices.',
+                  style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
+                ),
+                if (!auth.isLinked) ...[
+                  const SizedBox(height: AppSpacing.md),
+                  PrimaryButton(
+                    label: 'Continue with Apple',
+                    isLoading: _isBusy,
+                    onPressed: () => _runGuarded(() => context.read<AuthProvider>().linkApple()),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  OutlinedButton(
+                    onPressed: _isBusy
+                        ? null
+                        : () => _runGuarded(() => context.read<AuthProvider>().linkGoogle()),
+                    child: const Text('Continue with Google'),
+                  ),
+                ],
+              ],
+            ),
           ),
           const SizedBox(height: AppSpacing.md),
-          if (!auth.isLinked) ...[
-            PrimaryButton(
-              label: 'Continue with Apple',
-              isLoading: _isBusy,
-              onPressed: () => _runGuarded(() => context.read<AuthProvider>().linkApple()),
+
+          // ── Danger zone ────────────────────────────────────────────────────
+          GlassPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(children: [
+                  const Icon(Icons.warning_amber_outlined, color: AppColors.error),
+                  const SizedBox(width: AppSpacing.sm),
+                  Text('Privacy', style: AppTypography.headlineMd),
+                ]),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'Deleting your account signs you out of this device. Memories may no longer be reachable.',
+                  style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.error,
+                    side: const BorderSide(color: AppColors.error),
+                  ),
+                  onPressed: _confirmDeleteAccount,
+                  child: const Text('Delete account'),
+                ),
+              ],
             ),
-            const SizedBox(height: AppSpacing.sm),
-            OutlinedButton(
-              onPressed: _isBusy
-                  ? null
-                  : () => _runGuarded(() => context.read<AuthProvider>().linkGoogle()),
-              child: const Text('Continue with Google'),
-            ),
-            const SizedBox(height: AppSpacing.md),
-          ],
-          const Divider(),
+          ),
           const SizedBox(height: AppSpacing.md),
-          Text('Danger zone', style: AppTypography.headlineMd),
-          const SizedBox(height: AppSpacing.sm),
-          OutlinedButton(
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.error,
-              side: const BorderSide(color: AppColors.error),
+
+          // ── About ──────────────────────────────────────────────────────────
+          GlassPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(children: [
+                  const Icon(Icons.info_outline, color: AppColors.onSurfaceVariant),
+                  const SizedBox(width: AppSpacing.sm),
+                  Text('About', style: AppTypography.headlineMd),
+                ]),
+                const SizedBox(height: AppSpacing.sm),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('TimeDrop', style: AppTypography.bodyMd),
+                    Text(
+                      AppConstants.appVersion,
+                      style: AppTypography.labelSm.copyWith(color: AppColors.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ],
             ),
-            onPressed: _confirmDeleteAccount,
-            child: const Text('Delete account'),
           ),
         ],
       ),

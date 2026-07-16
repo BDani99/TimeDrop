@@ -16,13 +16,17 @@ import '../../providers/vault_provider.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/media_cache_service.dart';
 import '../widgets/app_snackbar.dart';
+import '../widgets/glass/glass_bottom_sheet.dart';
+import '../widgets/loading/skeleton_box.dart';
+import '../widgets/vault/vault_calendar_view.dart';
+import 'memory_detail_screen.dart';
 import '../widgets/countdown_timer.dart';
 import '../widgets/primary_button.dart';
 import 'paywall_screen.dart';
 import 'radar_screen.dart';
 import 'video_player_screen.dart';
 
-enum VaultView { timeline, map }
+enum VaultView { timeline, map, calendar }
 
 /// The recipient's "Vault": an immersive timeline / map of received memories,
 /// with manual redemption, progressive-auth protection, and an upsell hook.
@@ -36,6 +40,12 @@ class VaultScreen extends StatefulWidget {
 class _VaultScreenState extends State<VaultScreen> {
   VaultView _view = VaultView.timeline;
   bool _isReopening = false;
+  bool _thumbnailsWarmed = false;
+
+  /// Fully-resolved unlocked-card previews (cover bytes + note text) keyed by
+  /// `capsuleId`. Populated by `_warmThumbnails` before the timeline renders
+  /// so cards paint fully-populated instead of streaming in one-by-one.
+  final Map<String, _UnlockedPreview> _previews = {};
 
   @override
   void initState() {
@@ -43,15 +53,45 @@ class _VaultScreenState extends State<VaultScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
+  /// Reads every unlocked card's cover photo + cached note in parallel, then
+  /// `precacheImage`s each cover so the first paint is instant. Nothing on
+  /// the timeline is shown until this completes, killing the flicker where
+  /// cards popped in one after another.
+  Future<void> _warmThumbnails(List<ReceivedCapsuleModel> items) async {
+    final results = await Future.wait([
+      for (final item in items.where((c) => c.isViewed))
+        () async {
+          final cover = await MediaCacheService.coverPhoto(item.capsuleId);
+          final note = await MediaCacheService.noteFor(item.capsuleId);
+          if (cover != null && mounted) {
+            await precacheImage(MemoryImage(cover), context);
+          }
+          return MapEntry(
+            item.capsuleId,
+            _UnlockedPreview(cover: cover, note: note),
+          );
+        }(),
+    ]);
+    _previews
+      ..clear()
+      ..addEntries(results);
+  }
+
   String? get _userId => context.read<AuthProvider>().userId;
 
   Future<void> _load() async {
     final userId = _userId;
     if (userId == null) return;
+    if (mounted) setState(() => _thumbnailsWarmed = false);
     try {
-      await context.read<VaultProvider>().load(userId);
+      final provider = context.read<VaultProvider>();
+      await provider.load(userId);
+      if (!mounted) return;
+      await _warmThumbnails(provider.receivedCapsules);
     } catch (e) {
       if (mounted) AppSnackbar.showError(context, e);
+    } finally {
+      if (mounted) setState(() => _thumbnailsWarmed = true);
     }
   }
 
@@ -75,6 +115,22 @@ class _VaultScreenState extends State<VaultScreen> {
     );
   }
 
+  void _openDetail(ReceivedCapsuleModel item, {required String actionLabel, required VoidCallback onAction}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MemoryDetailScreen(
+          item: item,
+          primaryLabel: actionLabel,
+          onPrimaryAction: () {
+            Navigator.pop(context);
+            onAction();
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _reopen(ReceivedCapsuleModel item) async {
     if (_isReopening) return;
     setState(() => _isReopening = true);
@@ -89,6 +145,11 @@ class _VaultScreenState extends State<VaultScreen> {
             mimeType: content.mimeType,
             note: content.note,
             photos: content.photos,
+            skipPreRoll: true,
+            capsuleId: item.capsuleId,
+            capturedAt: item.capsuleCreatedAt ?? item.unlockTime,
+            latitude: item.latitude,
+            longitude: item.longitude,
           ),
         ),
       );
@@ -103,13 +164,9 @@ class _VaultScreenState extends State<VaultScreen> {
     // Prefill from the clipboard if it holds a TimeDrop link.
     final clipLink = await ClipboardService.checkClipboardForShareLink();
     if (!mounted) return;
-    await showModalBottomSheet<void>(
+    await GlassBottomSheet.show<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppColors.surfaceContainerLowest,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: AppRadii.lgRadius.topLeft),
-      ),
       builder: (_) => _RedeemSheet(
         initialText: clipLink?.toUrl() ?? '',
         onSubmit: _submitCode,
@@ -162,6 +219,11 @@ class _VaultScreenState extends State<VaultScreen> {
                   label: Text('Map'),
                   icon: Icon(Icons.map_outlined),
                 ),
+                ButtonSegment(
+                  value: VaultView.calendar,
+                  label: Text('Calendar'),
+                  icon: Icon(Icons.calendar_month_outlined),
+                ),
               ],
               selected: {_view},
               onSelectionChanged: (s) => setState(() => _view = s.first),
@@ -175,15 +237,67 @@ class _VaultScreenState extends State<VaultScreen> {
         onPressed: _showRedeemSheet,
         child: const Icon(Icons.vpn_key_outlined),
       ),
-      body: _view == VaultView.timeline
-          ? _TimelineView(
-              vault: vault,
-              isReopening: _isReopening,
-              onRefresh: _load,
-              onOpenRadar: _openRadar,
-              onReopen: _reopen,
-            )
-          : _MapView(vault: vault, onOpenRadar: _openRadar, onReopen: _reopen),
+      body: !_thumbnailsWarmed
+          ? const _VaultLoadingSkeleton()
+          : IndexedStack(
+              index: _view.index,
+              sizing: StackFit.expand,
+              children: [
+                _TimelineView(
+                  vault: vault,
+                  isReopening: _isReopening,
+                  onRefresh: _load,
+                  onOpenRadar: _openRadar,
+                  onReopen: _reopen,
+                  onOpenDetail: _openDetail,
+                  previews: _previews,
+                ),
+                _MapView(
+                  vault: vault,
+                  onOpenRadar: _openRadar,
+                  onReopen: _reopen,
+                ),
+                VaultCalendarView(
+                  items: vault.receivedCapsules,
+                  onSelect: (ReceivedCapsuleModel item) {
+                    if (item.isViewed) {
+                      _reopen(item);
+                    } else if (item.hasKey && item.isUnlockTimeReached) {
+                      _openRadar(item);
+                    } else {
+                      _openDetail(
+                        item,
+                        actionLabel: item.hasKey ? 'Go unlock' : 'Close',
+                        onAction: item.hasKey ? () => _openRadar(item) : () {},
+                      );
+                    }
+                  },
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+/// Full-screen loading state — one skeleton per capsule slot — shown while
+/// the first `load()` is in flight AND while cover thumbnails are being
+/// pre-cached, so cards don't pop in one after another.
+class _VaultLoadingSkeleton extends StatelessWidget {
+  const _VaultLoadingSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(AppSpacing.containerMargin),
+      children: const [
+        SkeletonBox(width: 200, height: 24),
+        SizedBox(height: AppSpacing.md),
+        SkeletonMemoryCard(),
+        SizedBox(height: AppSpacing.sm),
+        SkeletonMemoryCard(),
+        SizedBox(height: AppSpacing.sm),
+        SkeletonMemoryCard(),
+      ],
     );
   }
 }
@@ -195,6 +309,8 @@ class _TimelineView extends StatelessWidget {
     required this.onRefresh,
     required this.onOpenRadar,
     required this.onReopen,
+    required this.onOpenDetail,
+    required this.previews,
   });
 
   final VaultProvider vault;
@@ -202,6 +318,8 @@ class _TimelineView extends StatelessWidget {
   final Future<void> Function() onRefresh;
   final void Function(ReceivedCapsuleModel) onOpenRadar;
   final void Function(ReceivedCapsuleModel) onReopen;
+  final void Function(ReceivedCapsuleModel, {required String actionLabel, required VoidCallback onAction}) onOpenDetail;
+  final Map<String, _UnlockedPreview> previews;
 
   @override
   Widget build(BuildContext context) {
@@ -224,11 +342,19 @@ class _TimelineView extends StatelessWidget {
             const SizedBox(height: AppSpacing.md),
           ],
           if (vault.isLoading && vault.receivedCapsules.isEmpty)
-            const Center(child: CircularProgressIndicator(color: AppColors.primary)),
+            const SkeletonMemoryCard(),
           if (vault.ready.isNotEmpty) ...[
             _SectionLabel('Ready to open'),
             for (final item in vault.ready) ...[
-              _ReadyCard(item: item, onTap: () => onOpenRadar(item)),
+              _ReadyCard(
+                item: item,
+                onTap: () => onOpenRadar(item),
+                onLongPress: () => onOpenDetail(
+                  item,
+                  actionLabel: 'Go unlock',
+                  onAction: () => onOpenRadar(item),
+                ),
+              ),
               const SizedBox(height: AppSpacing.sm),
             ],
             const SizedBox(height: AppSpacing.md),
@@ -249,7 +375,17 @@ class _TimelineView extends StatelessWidget {
           if (vault.unlocked.isNotEmpty) ...[
             _SectionLabel('Unlocked'),
             for (final item in vault.unlocked) ...[
-              _UnlockedCard(item: item, isBusy: isReopening, onTap: () => onReopen(item)),
+              _UnlockedCard(
+                item: item,
+                preview: previews[item.capsuleId] ?? const _UnlockedPreview(),
+                isBusy: isReopening,
+                onTap: () => onReopen(item),
+                onLongPress: () => onOpenDetail(
+                  item,
+                  actionLabel: 'Replay',
+                  onAction: () => onReopen(item),
+                ),
+              ),
               const SizedBox(height: AppSpacing.sm),
             ],
           ],
@@ -425,9 +561,10 @@ class _FreemiumBanner extends StatelessWidget {
 
 /// Ready to open: brighter, gently "breathing", tappable → Radar.
 class _ReadyCard extends StatefulWidget {
-  const _ReadyCard({required this.item, required this.onTap});
+  const _ReadyCard({required this.item, required this.onTap, this.onLongPress});
   final ReceivedCapsuleModel item;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   State<_ReadyCard> createState() => _ReadyCardState();
@@ -454,6 +591,7 @@ class _ReadyCardState extends State<_ReadyCard> with SingleTickerProviderStateMi
       child: InkWell(
         borderRadius: AppRadii.mdRadius,
         onTap: widget.onTap,
+        onLongPress: widget.onLongPress,
         child: Container(
           padding: const EdgeInsets.all(AppSpacing.md),
           decoration: BoxDecoration(
@@ -545,18 +683,29 @@ class _WaitingCard extends StatelessWidget {
   }
 }
 
+/// Preloaded assets used to render an [_UnlockedCard] without an async gap.
+class _UnlockedPreview {
+  const _UnlockedPreview({this.cover, this.note});
+  final Uint8List? cover;
+  final String? note;
+}
+
 /// Unlocked: cached cover thumbnail + date + city + note preview, tap → play.
+/// Renders synchronously from a [_UnlockedPreview] populated by the parent
+/// screen before the timeline is built.
 class _UnlockedCard extends StatelessWidget {
-  const _UnlockedCard({required this.item, required this.isBusy, required this.onTap});
+  const _UnlockedCard({
+    required this.item,
+    required this.preview,
+    required this.isBusy,
+    required this.onTap,
+    this.onLongPress,
+  });
   final ReceivedCapsuleModel item;
+  final _UnlockedPreview preview;
   final bool isBusy;
   final VoidCallback onTap;
-
-  Future<(Uint8List?, String?)> _load() async {
-    final cover = await MediaCacheService.coverPhoto(item.capsuleId);
-    final note = await MediaCacheService.noteFor(item.capsuleId);
-    return (cover, note);
-  }
+  final VoidCallback? onLongPress;
 
   String _date() {
     final d = item.unlockTime.toLocal();
@@ -569,9 +718,12 @@ class _UnlockedCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cover = preview.cover;
+    final note = preview.note;
     return InkWell(
       borderRadius: AppRadii.mdRadius,
       onTap: isBusy ? null : onTap,
+      onLongPress: isBusy ? null : onLongPress,
       child: Container(
         decoration: BoxDecoration(
           color: AppColors.surfaceContainerLowest,
@@ -579,70 +731,67 @@ class _UnlockedCard extends StatelessWidget {
           border: Border.all(color: AppColors.outlineVariant),
         ),
         clipBehavior: Clip.antiAlias,
-        child: FutureBuilder<(Uint8List?, String?)>(
-          future: _load(),
-          builder: (context, snap) {
-            final cover = snap.data?.$1;
-            final note = snap.data?.$2;
-            return Row(
-              children: [
-                SizedBox(
-                  width: 92,
-                  height: 92,
-                  child: cover != null
-                      ? Image.memory(cover, fit: BoxFit.cover)
-                      : Container(
-                          color: AppColors.surfaceContainerHigh,
-                          child: const Icon(Icons.play_circle_outline,
-                              color: AppColors.primary, size: 32),
-                        ),
-                ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(AppSpacing.sm),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          item.city != null && item.city!.isNotEmpty
-                              ? '${_date()} · ${item.city}'
-                              : _date(),
-                          style: AppTypography.labelMd,
-                        ),
-                        if (note != null && note.isNotEmpty) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            note,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: AppTypography.labelSm
-                                .copyWith(color: AppColors.onSurfaceVariant),
-                          ),
-                        ],
-                      ],
+        child: Row(
+          children: [
+            SizedBox(
+              width: 92,
+              height: 92,
+              child: cover != null
+                  ? Image.memory(cover, fit: BoxFit.cover, gaplessPlayback: true)
+                  : Container(
+                      color: AppColors.surfaceContainerHigh,
+                      child: const Icon(Icons.play_circle_outline,
+                          color: AppColors.primary, size: 32),
                     ),
-                  ),
-                ),
-                if (isBusy)
-                  const Padding(
-                    padding: EdgeInsets.only(right: AppSpacing.sm),
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.sm),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      item.city != null && item.city!.isNotEmpty
+                          ? '${_date()} · ${item.city}'
+                          : _date(),
+                      style: AppTypography.labelMd,
                     ),
-                  ),
-              ],
-            );
-          },
+                    if (note != null && note.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        note,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTypography.labelSm
+                            .copyWith(color: AppColors.onSurfaceVariant),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            if (isBusy)
+              const Padding(
+                padding: EdgeInsets.only(right: AppSpacing.sm),
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+                ),
+              ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _MapView extends StatelessWidget {
+/// Keeps the FlutterMap alive across VaultView switches (via IndexedStack) so
+/// tiles are only fetched once. Also renders a warm placeholder underneath
+/// the tile layer so the first paint doesn't flash the raw grey grid while
+/// tiles stream in.
+class _MapView extends StatefulWidget {
   const _MapView({required this.vault, required this.onOpenRadar, required this.onReopen});
 
   final VaultProvider vault;
@@ -650,8 +799,20 @@ class _MapView extends StatelessWidget {
   final void Function(ReceivedCapsuleModel) onReopen;
 
   @override
+  State<_MapView> createState() => _MapViewState();
+}
+
+class _MapViewState extends State<_MapView>
+    with AutomaticKeepAliveClientMixin {
+  bool _tilesLoaded = false;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
   Widget build(BuildContext context) {
-    final items = vault.receivedCapsules;
+    super.build(context);
+    final items = widget.vault.receivedCapsules;
     if (items.isEmpty) {
       return Center(
         child: Text(
@@ -661,9 +822,6 @@ class _MapView extends StatelessWidget {
       );
     }
     final points = [for (final i in items) LatLng(i.latitude, i.longitude)];
-    // Frame the actual drops: a single point centers with a city-level zoom;
-    // multiple points fit their bounds (with padding + a maxZoom cap so a
-    // tight cluster doesn't zoom to street level).
     final MapOptions options = points.length == 1
         ? MapOptions(initialCenter: points.first, initialZoom: 12)
         : MapOptions(
@@ -673,32 +831,61 @@ class _MapView extends StatelessWidget {
               maxZoom: 13,
             ),
           );
-    return FlutterMap(
-      options: options,
+    return Stack(
       children: [
-        // Light CartoDB "Voyager" basemap — warmer and legible, matching the
-        // app's Golden Hour palette (the dark basemap read as too murky).
-        TileLayer(
-          urlTemplate: 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-          userAgentPackageName: 'com.timedrop.app',
-          retinaMode: RetinaMode.isHighDensity(context),
+        Positioned.fill(
+          child: ColoredBox(color: AppColors.surfaceContainer),
         ),
-        MarkerLayer(
-          markers: [
-            for (final item in items)
-              Marker(
-                point: LatLng(item.latitude, item.longitude),
-                width: 48,
-                height: 48,
-                child: GestureDetector(
-                  onTap: () => item.isViewed ? onReopen(item) : onOpenRadar(item),
-                  child: item.isViewed
-                      ? _CoverMarker(capsuleId: item.capsuleId)
-                      : const _PulsingMarker(),
-                ),
-              ),
+        FlutterMap(
+          options: options,
+          children: [
+            TileLayer(
+              urlTemplate: 'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+              userAgentPackageName: 'com.timedrop.app',
+              retinaMode: RetinaMode.isHighDensity(context),
+              // Pre-fetch a wider ring of tiles so panning feels instant and
+              // fewer holes appear on first load.
+              keepBuffer: 4,
+              panBuffer: 2,
+              tileBuilder: (context, tileWidget, tile) {
+                if (!_tilesLoaded) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted && !_tilesLoaded) {
+                      setState(() => _tilesLoaded = true);
+                    }
+                  });
+                }
+                return tileWidget;
+              },
+            ),
+            MarkerLayer(
+              markers: [
+                for (final item in items)
+                  Marker(
+                    point: LatLng(item.latitude, item.longitude),
+                    width: 48,
+                    height: 48,
+                    child: GestureDetector(
+                      onTap: () => item.isViewed
+                          ? widget.onReopen(item)
+                          : widget.onOpenRadar(item),
+                      child: item.isViewed
+                          ? _CoverMarker(capsuleId: item.capsuleId)
+                          : const _PulsingMarker(),
+                    ),
+                  ),
+              ],
+            ),
           ],
         ),
+        if (!_tilesLoaded)
+          const Positioned.fill(
+            child: IgnorePointer(
+              child: Center(
+                child: SkeletonBox(width: 160, height: 160, borderRadius: 24),
+              ),
+            ),
+          ),
       ],
     );
   }

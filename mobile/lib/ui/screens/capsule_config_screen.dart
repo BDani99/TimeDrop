@@ -22,6 +22,10 @@ import '../../providers/payment_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/geolocation_service.dart';
 import '../widgets/app_snackbar.dart';
+import '../widgets/loading/skeleton_box.dart';
+import '../widgets/glass/glass_bottom_sheet.dart';
+import '../widgets/navigation/spring_page_route.dart';
+import '../widgets/rituals/seal_ritual_overlay.dart';
 import '../widgets/primary_button.dart';
 import 'paywall_screen.dart';
 import 'share_screen.dart';
@@ -87,12 +91,8 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
 
   Future<void> _addPhoto() async {
     if (_photoPaths.length >= AppConstants.maxCapsulePhotos) return;
-    final source = await showModalBottomSheet<ImageSource>(
+    final source = await GlassBottomSheet.show<ImageSource>(
       context: context,
-      backgroundColor: AppColors.surfaceContainerLowest,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: AppRadii.lgRadius.topLeft),
-      ),
       builder: (_) => const _PhotoSourceSheet(),
     );
     if (source == null) return;
@@ -205,12 +205,9 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
     setState(() => _unlockTime = combined);
   }
 
-  Future<void> _seal() async {
+  Future<void> _onSealPressed() async {
     final position = _position;
     final unlockTime = _unlockTime;
-    // Prefer the map-refined location; fall back to the raw GPS fix.
-    final chosen = _selectedLatLng ??
-        (position == null ? null : LatLng(position.latitude, position.longitude));
     if (position == null) {
       AppSnackbar.showError(
         context,
@@ -236,9 +233,6 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
 
     final settingsProvider = context.read<SettingsProvider>();
     final paymentProvider = context.read<PaymentProvider>();
-    final capsuleProvider = context.read<CapsuleProvider>();
-    final authProvider = context.read<AuthProvider>();
-
     try {
       paymentProvider.requireCanCreateCapsule(
         dropsUsed: settingsProvider.freeDropsUsed,
@@ -250,12 +244,32 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
       return;
     }
 
+    ImageProvider? preview;
+    if (_coverPhotoIndex != null && _photoPaths.isNotEmpty) {
+      preview = FileImage(File(_photoPaths[_coverPhotoIndex!]));
+    }
+
+    await SealRitualOverlay.show(context, previewImage: preview);
+    if (!mounted) return;
+    await _seal();
+  }
+
+  Future<void> _seal() async {
+    final position = _position;
+    final unlockTime = _unlockTime;
+    final chosen = _selectedLatLng ??
+        (position == null ? null : LatLng(position.latitude, position.longitude));
+    final name = _nameController.text.trim();
+
+    final settingsProvider = context.read<SettingsProvider>();
+    final capsuleProvider = context.read<CapsuleProvider>();
+    final authProvider = context.read<AuthProvider>();
+
     try {
       final userId = authProvider.userId;
       if (userId == null) {
         throw const AuthException('You need to be signed in to create a memory.');
       }
-      // Persist the name so it prefills next time and always feeds ?from=.
       if (settingsProvider.displayName != name) {
         await settingsProvider.setDisplayName(userId, name);
       }
@@ -268,14 +282,14 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
         coverPhotoIndex: _coverPhotoIndex,
         latitude: chosen!.latitude,
         longitude: chosen.longitude,
-        unlockTime: unlockTime,
+        unlockTime: unlockTime!,
         creatorId: userId,
       );
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(
-          builder: (_) => ShareScreen(
+        SpringPageRoute(
+          page: ShareScreen(
             shareId: info.shareId,
             encryptionKey: info.encryptionKey,
             fromName: name,
@@ -289,11 +303,14 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
   }
 
   String _formatDateTime(DateTime dt) {
-    final h = dt.hour.toString().padLeft(2, '0');
-    final m = dt.minute.toString().padLeft(2, '0');
-    final mo = dt.month.toString().padLeft(2, '0');
-    final d = dt.day.toString().padLeft(2, '0');
-    return '${dt.year}-$mo-$d at $h:$m';
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final amPm = dt.hour < 12 ? 'AM' : 'PM';
+    return '${months[dt.month - 1]} ${dt.day}, ${dt.year} · $hour:$minute $amPm';
   }
 
   @override
@@ -313,7 +330,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(24),
                 child: _isLoadingLocation
-                    ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+                    ? const Center(child: SkeletonBox(width: double.infinity, height: 220, borderRadius: 24))
                     : _position == null
                         ? _LocationErrorRetry(error: _locationError, onRetry: _loadLocation)
                         : Stack(
@@ -341,8 +358,9 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
                                 children: [
                                   TileLayer(
                                     urlTemplate:
-                                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                        'https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
                                     userAgentPackageName: 'com.timedrop.app',
+                                    retinaMode: RetinaMode.isHighDensity(context),
                                   ),
                                 ],
                               ),
@@ -415,7 +433,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
             PrimaryButton(
               label: 'Seal this Moment',
               isLoading: isCreating,
-              onPressed: _seal,
+              onPressed: _onSealPressed,
             ),
           ],
         ),

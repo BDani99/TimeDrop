@@ -2,17 +2,21 @@ import 'dart:async';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../core/haptics/app_haptics.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../services/geolocation_service.dart';
 import '../widgets/app_snackbar.dart';
+import '../widgets/glass/glass_panel.dart';
+import '../widgets/loading/skeleton_box.dart';
+import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/permission_gate.dart';
+import '../widgets/watermark_stamp.dart';
 import 'capsule_config_screen.dart';
 
 /// Full-screen video recorder. Wrapped in [PermissionGate] so camera +
@@ -72,7 +76,7 @@ class _CameraBody extends StatefulWidget {
   State<_CameraBody> createState() => _CameraBodyState();
 }
 
-class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderStateMixin {
+class _CameraBodyState extends State<_CameraBody> with TickerProviderStateMixin {
   CameraController? _controller;
   List<CameraDescription> _cameras = const [];
   // Open in selfie mode by default — most memories start front-facing.
@@ -85,6 +89,9 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
   Timer? _autoStopTimer;
 
   late final AnimationController _ringController;
+  late final AnimationController _previewScaleController;
+  late final AnimationController _lensSwitchController;
+  double _previewScale = 1.0;
 
   StreamSubscription<Position>? _positionSubscription;
   Position? _position;
@@ -95,6 +102,14 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
     _ringController = AnimationController(
       vsync: this,
       duration: AppConstants.maxRecordingDuration,
+    );
+    _previewScaleController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    );
+    _lensSwitchController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
     );
     _initCamera();
     _initLocationWatermark();
@@ -161,9 +176,12 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
         ? CameraLensDirection.front
         : CameraLensDirection.back;
     try {
+      await _lensSwitchController.forward(from: 0);
+      await AppHaptics.light();
       await _controller?.dispose();
       _controller = null;
       await _createController(target);
+      await _lensSwitchController.reverse();
     } catch (e) {
       if (mounted) AppSnackbar.showError(context, e);
     } finally {
@@ -189,8 +207,11 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
     try {
       await controller.startVideoRecording();
       _recordingStart = DateTime.now();
-      HapticFeedback.lightImpact();
+      await AppHaptics.medium();
       _ringController.forward(from: 0);
+      _previewScaleController.forward(from: 0).then((_) {
+        if (mounted) setState(() => _previewScale = 1.03);
+      });
       setState(() => _isRecording = true);
       _autoStopTimer = Timer(AppConstants.maxRecordingDuration, _stopRecording);
     } catch (e) {
@@ -206,7 +227,8 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
     _ringController.reset();
     try {
       final file = await controller.stopVideoRecording();
-      HapticFeedback.lightImpact();
+      await AppHaptics.medium();
+      setState(() => _previewScale = 1.0);
       final start = _recordingStart;
       final durationMs = start != null ? DateTime.now().difference(start).inMilliseconds : 0;
       if (mounted) setState(() => _isRecording = false);
@@ -215,8 +237,8 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
       // memory across screens — the OOM fix.
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (_) => CapsuleConfigScreen(
+        SpringPageRoute(
+          page: CapsuleConfigScreen(
             videoPath: file.path,
             mimeType: 'video/mp4',
             durationMs: durationMs,
@@ -236,6 +258,8 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
     _autoStopTimer?.cancel();
     _positionSubscription?.cancel();
     _ringController.dispose();
+    _previewScaleController.dispose();
+    _lensSwitchController.dispose();
     _controller?.dispose();
     super.dispose();
   }
@@ -244,10 +268,7 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
   Widget build(BuildContext context) {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized || _isSwitching) {
-      return const ColoredBox(
-        color: Colors.black,
-        child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
-      );
+      return const _CameraInitPlaceholder();
     }
 
     final flashAvailable = _lensDirection == CameraLensDirection.back;
@@ -263,15 +284,30 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
         Positioned.fill(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              return ClipRect(
-                child: OverflowBox(
-                  alignment: Alignment.center,
-                  child: FittedBox(
-                    fit: BoxFit.cover,
-                    child: SizedBox(
-                      width: constraints.maxWidth,
-                      height: constraints.maxWidth * controller.value.aspectRatio,
-                      child: CameraPreview(controller),
+              return Transform.scale(
+                scale: _previewScale,
+                child: AnimatedBuilder(
+                  animation: _lensSwitchController,
+                  builder: (context, child) {
+                    return Transform(
+                      alignment: Alignment.center,
+                      transform: Matrix4.identity()
+                        ..setEntry(3, 2, 0.001)
+                        ..rotateY(_lensSwitchController.value * 3.14159),
+                      child: child,
+                    );
+                  },
+                  child: ClipRect(
+                    child: OverflowBox(
+                      alignment: Alignment.center,
+                      child: FittedBox(
+                        fit: BoxFit.cover,
+                        child: SizedBox(
+                          width: constraints.maxWidth,
+                          height: constraints.maxWidth * controller.value.aspectRatio,
+                          child: CameraPreview(controller),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -283,30 +319,16 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
         SafeArea(
           child: Stack(
             children: [
-              // Flash (top-left).
-              if (flashAvailable)
-                Positioned(
-                  top: AppSpacing.sm,
-                  left: AppSpacing.sm,
-                  child: _CircleIconButton(icon: _flash.icon, onTap: _cycleFlash),
-                ),
+              // Timestamp / GPS watermark — top-left, compact.
+              Positioned(
+                top: AppSpacing.sm,
+                left: AppSpacing.md,
+                child: _Watermark(position: _position),
+              ),
 
-              // Selfie toggle (top-right).
-              if (_cameras.length > 1)
-                Positioned(
-                  top: AppSpacing.sm,
-                  right: AppSpacing.sm,
-                  child: _CircleIconButton(
-                    icon: Icons.cameraswitch,
-                    onTap: _isRecording ? null : _switchCamera,
-                  ),
-                ),
-
-              // Bottom band: watermark, hint and record button stacked in a
-              // single column so they never overlap (previously the watermark
-              // was pinned to the raw screen edge while the controls used the
-              // SafeArea, so the two collided). Watermark left-aligned above the
-              // centered controls.
+              // Bottom band: hint + record button. Flash sits to the left of
+              // the record, camera flip to the right (always visible when
+              // multiple cameras exist).
               Align(
                 alignment: Alignment.bottomCenter,
                 child: Padding(
@@ -320,11 +342,6 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: _Watermark(position: _position),
-                      ),
-                      const SizedBox(height: AppSpacing.lg),
                       AnimatedOpacity(
                         opacity: _isRecording ? 0 : 1,
                         duration: const Duration(milliseconds: 250),
@@ -335,12 +352,53 @@ class _CameraBodyState extends State<_CameraBody> with SingleTickerProviderState
                         ),
                       ),
                       const SizedBox(height: AppSpacing.sm),
-                      Center(
-                        child: _RecordButton(
-                          isRecording: _isRecording,
-                          progress: _ringController,
-                          onTap: _isRecording ? _stopRecording : _startRecording,
-                        ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 56,
+                            child: flashAvailable
+                                ? Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: GlassPanel(
+                                      padding: const EdgeInsets.all(4),
+                                      borderRadius: BorderRadius.circular(999),
+                                      child: _CircleIconButton(
+                                        icon: _flash.icon,
+                                        onTap: _cycleFlash,
+                                      ),
+                                    ),
+                                  )
+                                : null,
+                          ),
+                          GlassPanel(
+                            padding: const EdgeInsets.all(6),
+                            borderRadius: BorderRadius.circular(999),
+                            opacity: 0.55,
+                            child: _RecordButton(
+                              isRecording: _isRecording,
+                              progress: _ringController,
+                              onTap: _isRecording ? _stopRecording : _startRecording,
+                            ),
+                          ),
+                          SizedBox(
+                            width: 56,
+                            child: _cameras.length > 1
+                                ? Align(
+                                    alignment: Alignment.centerRight,
+                                    child: GlassPanel(
+                                      padding: const EdgeInsets.all(4),
+                                      borderRadius: BorderRadius.circular(999),
+                                      child: _CircleIconButton(
+                                        icon: Icons.cameraswitch,
+                                        onTap: _isRecording ? null : _switchCamera,
+                                      ),
+                                    ),
+                                  )
+                                : null,
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -432,57 +490,99 @@ class _CircleIconButton extends StatelessWidget {
   }
 }
 
-/// Translucent live date + GPS overlay. English date format (e.g. OCT 24,
-/// 2026); coordinates shown only once a live position is available.
+/// Wraps [WatermarkStamp] with the live GPS position from the camera screen
+/// (so the same stamp component powers both recording and playback).
 class _Watermark extends StatelessWidget {
   const _Watermark({required this.position});
 
   final Position? position;
 
-  static const _months = [
-    'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
-    'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC',
-  ];
+  @override
+  Widget build(BuildContext context) {
+    return WatermarkStamp(
+      timestamp: DateTime.now(),
+      latitude: position?.latitude,
+      longitude: position?.longitude,
+    );
+  }
+}
 
-  String _formatDate(DateTime now) {
-    final month = _months[now.month - 1];
-    return '$month ${now.day}, ${now.year}';
+/// Premium placeholder shown while the [CameraController] is initialising.
+/// Replaces the jarring black-screen-with-white-circle that a plain
+/// [SkeletonBox] produced. A subtle pulsing viewfinder ring communicates
+/// "getting ready" without feeling like a crash or empty state.
+class _CameraInitPlaceholder extends StatefulWidget {
+  const _CameraInitPlaceholder();
+
+  @override
+  State<_CameraInitPlaceholder> createState() => _CameraInitPlaceholderState();
+}
+
+class _CameraInitPlaceholderState extends State<_CameraInitPlaceholder>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final coords = position == null
-        ? null
-        : '${position!.latitude.toStringAsFixed(5)}, ${position!.longitude.toStringAsFixed(5)}';
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(width: 3, height: 28, color: AppColors.primary),
-        const SizedBox(height: AppSpacing.xs),
-        Text(
-          _formatDate(now),
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 22,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 1,
-            shadows: [Shadow(color: Colors.black54, blurRadius: 6)],
-          ),
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: AnimatedBuilder(
+          animation: _pulse,
+          builder: (context, _) {
+            final t = Curves.easeInOut.transform(_pulse.value);
+            return Opacity(
+              opacity: 0.25 + 0.35 * t,
+              child: Transform.scale(
+                scale: 0.92 + 0.08 * t,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Viewfinder outline
+                    Container(
+                      width: 96,
+                      height: 96,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white, width: 2),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Icon(
+                        Icons.photo_camera_outlined,
+                        color: Colors.white,
+                        size: 44,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Preparing camera…',
+                      style: TextStyle(
+                        color: Colors.white60,
+                        fontSize: 13,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
         ),
-        if (coords != null)
-          Text(
-            coords,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 13,
-              fontFeatures: [FontFeature.tabularFigures()],
-              shadows: [Shadow(color: Colors.black54, blurRadius: 6)],
-            ),
-          ),
-      ],
+      ),
     );
   }
 }

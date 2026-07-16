@@ -19,6 +19,7 @@ class MemoryCard extends StatelessWidget {
     this.city,
     this.status = 'ready',
     this.onRetry,
+    this.accentColor,
   });
 
   /// Reverse-geocoded drop location shown as the title; falls back to a
@@ -30,6 +31,9 @@ class MemoryCard extends StatelessWidget {
   /// Invoked when a `failed` card is tapped. Wired to
   /// `CapsuleProvider.retryUpload`. Null disables the tap.
   final VoidCallback? onRetry;
+
+  /// Optional adaptive accent from cover/thumbnail palette extraction.
+  final Color? accentColor;
 
   static const _months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -69,13 +73,13 @@ class MemoryCard extends StatelessWidget {
     return Icons.place;
   }
 
-  Color get _accent => _isFailed ? AppColors.error : AppColors.primary;
+  Color get _accent => _isFailed ? AppColors.error : (accentColor ?? AppColors.primary);
 
   @override
   Widget build(BuildContext context) {
     final card = Container(
       width: double.infinity,
-      decoration: memoryCardDecoration(tint: _isFailed ? AppColors.error : null),
+      decoration: memoryCardDecoration(tint: _isFailed ? AppColors.error : accentColor),
       child: ClipRRect(
         borderRadius: AppRadii.lgRadius,
         child: Stack(

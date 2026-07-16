@@ -1,36 +1,34 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/config/system_config.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/errors/app_exception.dart';
+import '../../core/haptics/app_haptics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/utils/distance_motivation.dart';
 import '../../models/capsule_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/capsule_provider.dart';
 import '../../services/geolocation_service.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/countdown_timer.dart';
+import '../widgets/loading/skeleton_box.dart';
 import '../widgets/permission_gate.dart';
 import '../widgets/primary_button.dart';
-import '../widgets/radar_view.dart';
+import '../widgets/radar/sci_fi_radar_view.dart';
 import '../router/app_router.dart';
-import 'video_player_screen.dart';
+import 'unlock_sequence_screen.dart';
 
 /// Post-unlock-link screen: waits for the unlock time, then streams GPS
 /// position until the recipient is within `unlockProximityMeters` of the
 /// capsule (or the fuzzy-unlock condition is met), at which point it decrypts
-/// and hands off to [VideoPlayerScreen]. While the sender's background upload
+/// and hands off to [UnlockSequenceScreen]. While the sender's background upload
 /// is still in flight, shows a "materializing" state and polls until ready.
-///
-/// Constructor shape MUST match `app_router.dart`'s
-/// `RadarScreen(key: ..., shareId: ..., encryptionKey: ...)` call site.
 class RadarScreen extends StatefulWidget {
   const RadarScreen({
     super.key,
@@ -96,8 +94,6 @@ class _RadarScreenState extends State<RadarScreen> {
     });
   }
 
-  /// Haptic "heartbeat" that pulses faster as the recipient closes in (within
-  /// the closing zone). Cancelled outside the zone / once unlocked.
   void _syncHeartbeat(double? distance) {
     if (distance == null || distance >= AppConstants.radarClosingMeters) {
       _heartbeatTimer?.cancel();
@@ -106,22 +102,19 @@ class _RadarScreenState extends State<RadarScreen> {
       return;
     }
     final t = (distance / AppConstants.radarClosingMeters).clamp(0.0, 1.0);
-    final intervalMs = (250 + t * 1150).round(); // 250ms (very close) → 1400ms
+    final intervalMs = (250 + t * 1150).round();
     if (_heartbeatTimer != null &&
         _heartbeatIntervalMs != null &&
         (intervalMs - _heartbeatIntervalMs!).abs() < 120) {
-      return; // avoid thrashing the timer on tiny distance jitter
+      return;
     }
     _heartbeatTimer?.cancel();
     _heartbeatIntervalMs = intervalMs;
     _heartbeatTimer = Timer.periodic(Duration(milliseconds: intervalMs), (_) {
-      HapticFeedback.lightImpact();
+      AppHaptics.light();
     });
   }
 
-  /// Warm "heatmap" background: cream far away → soft apricot as you close.
-  /// Uses the on-brand [AppColors.secondaryContainer] rather than the saturated
-  /// primary container so the shift stays within the Golden Hour palette.
   Color _heatColor(double? distance) {
     if (distance == null) return AppColors.surface;
     final zone = SystemConfig.instance.radarZoneRadiusMeters;
@@ -129,8 +122,24 @@ class _RadarScreenState extends State<RadarScreen> {
     return Color.lerp(AppColors.surface, AppColors.secondaryContainer, t)!;
   }
 
-  /// Exit affordance. From the Gallery it pops back; as the recipient-clipboard
-  /// root it enters the app (onboarding-gated for new users).
+  double _proximity(double? distance) {
+    if (distance == null) return 0;
+    final zone = SystemConfig.instance.radarZoneRadiusMeters;
+    return (1 - (distance / zone)).clamp(0.0, 1.0);
+  }
+
+  double? _bearing(CapsuleProvider provider, CapsuleModel capsule) {
+    final lat = provider.userLatitude;
+    final lng = provider.userLongitude;
+    if (lat == null || lng == null) return null;
+    return GeolocationService.bearingDegrees(
+      startLat: lat,
+      startLng: lng,
+      endLat: capsule.latitude,
+      endLng: capsule.longitude,
+    );
+  }
+
   void _exit() {
     _pendingPollTimer?.cancel();
     _heartbeatTimer?.cancel();
@@ -171,7 +180,7 @@ class _RadarScreenState extends State<RadarScreen> {
                   }
                   if (_loadFailed) return _ErrorState(onBackHome: _exit);
                   if (capsuleProvider.isLoadingRadar || capsule == null) {
-                    return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+                    return const _RadarSkeleton();
                   }
                   if (capsule.isPending) {
                     _ensurePendingPoll();
@@ -188,12 +197,14 @@ class _RadarScreenState extends State<RadarScreen> {
   }
 
   Widget _buildPhase(BuildContext context, CapsuleProvider provider, CapsuleModel capsule) {
-    final center = LatLng(capsule.latitude, capsule.longitude);
     final distance = provider.distanceMeters;
+    final proximity = _proximity(distance);
+    final bearing = _bearing(provider, capsule);
+    final closing = distance != null && distance < AppConstants.radarClosingMeters;
 
     switch (provider.radarPhase) {
       case RadarPhase.locating:
-        return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+        return const _RadarSkeleton();
 
       case RadarPhase.waiting:
         return _RadarLayout(
@@ -203,10 +214,10 @@ class _RadarScreenState extends State<RadarScreen> {
             children: [
               CountdownTimer(target: capsule.unlockTime),
               const SizedBox(height: AppSpacing.lg),
-              RadarView(
-                center: center,
-                radiusMeters: SystemConfig.instance.radarZoneRadiusMeters,
-                distanceMeters: null,
+              SciFiRadarView(
+                bearingDegrees: bearing,
+                distanceMeters: distance,
+                proximity: proximity,
               ),
             ],
           ),
@@ -218,13 +229,13 @@ class _RadarScreenState extends State<RadarScreen> {
           WidgetsBinding.instance.addPostFrameCallback((_) => provider.startWatchingPosition());
         }
         WidgetsBinding.instance.addPostFrameCallback((_) => _syncHeartbeat(distance));
-        final closing = distance != null && distance < AppConstants.radarClosingMeters;
         return _RadarLayout(
-          title: closing ? 'You are getting closer...' : 'Find the spot to unlock it.',
-          child: RadarView(
-            center: center,
-            radiusMeters: SystemConfig.instance.radarZoneRadiusMeters,
+          title: DistanceMotivation.titleFor(distance, isClosing: closing),
+          subtitle: distance != null ? DistanceMotivation.messageFor(distance) : null,
+          child: SciFiRadarView(
+            bearingDegrees: bearing,
             distanceMeters: distance,
+            proximity: proximity,
           ),
         );
 
@@ -232,7 +243,6 @@ class _RadarScreenState extends State<RadarScreen> {
         if (!_hasUnlocked) {
           _hasUnlocked = true;
           _heartbeatTimer?.cancel();
-          HapticFeedback.heavyImpact();
           final mediaBytes = provider.decryptedMediaBytes;
           final metadata = provider.decryptedMetadata;
           final note = provider.decryptedNote;
@@ -242,11 +252,15 @@ class _RadarScreenState extends State<RadarScreen> {
             Navigator.pushReplacement(
               context,
               MaterialPageRoute(
-                builder: (_) => VideoPlayerScreen(
+                builder: (_) => UnlockSequenceScreen(
                   mediaBytes: mediaBytes,
                   mimeType: metadata.mimeType,
                   note: note,
                   photos: photos,
+                  capturedAt: metadata.capturedAt,
+                  capsuleId: capsule.id,
+                  latitude: capsule.latitude,
+                  longitude: capsule.longitude,
                 ),
               ),
             );
@@ -254,16 +268,21 @@ class _RadarScreenState extends State<RadarScreen> {
         }
         return _RadarLayout(
           title: 'The moment is yours.',
-          child: const CircularProgressIndicator(color: AppColors.primary),
+          child: const SkeletonBox(width: 180, height: 180, borderRadius: 999),
         );
     }
   }
 }
 
 class _RadarLayout extends StatelessWidget {
-  const _RadarLayout({required this.title, required this.child});
+  const _RadarLayout({
+    required this.title,
+    required this.child,
+    this.subtitle,
+  });
 
   final String title;
+  final String? subtitle;
   final Widget child;
 
   @override
@@ -274,8 +293,35 @@ class _RadarLayout extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(title, style: AppTypography.headlineMd, textAlign: TextAlign.center),
+          if (subtitle != null) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              subtitle!,
+              style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
+              textAlign: TextAlign.center,
+            ),
+          ],
           const SizedBox(height: AppSpacing.lg),
           child,
+        ],
+      ),
+    );
+  }
+}
+
+class _RadarSkeleton extends StatelessWidget {
+  const _RadarSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(AppSpacing.containerMargin),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: const [
+          SkeletonBox(width: 220, height: 28),
+          SizedBox(height: AppSpacing.lg),
+          SkeletonBox(width: double.infinity, height: 280, borderRadius: 28),
         ],
       ),
     );
@@ -292,11 +338,17 @@ class _MaterializingState extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const LinearProgressIndicator(color: AppColors.primary),
+          const SkeletonBox(width: double.infinity, height: 280, borderRadius: 28),
           const SizedBox(height: AppSpacing.lg),
           Text(
-            'The capsule is still materializing in the cloud...',
+            'Materializing your memory…',
             style: AppTypography.headlineMd,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            'The capsule is still sealing in the cloud.',
+            style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
             textAlign: TextAlign.center,
           ),
         ],

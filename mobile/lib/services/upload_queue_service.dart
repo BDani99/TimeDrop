@@ -103,23 +103,28 @@ class UploadQueueService {
   }
 
   /// Copies [sourcePath] into [dir] preserving its extension, returns the new
-  /// path. Falls back to the source path if the copy fails (e.g. source gone).
+  /// path. Throws a [StorageException] if the source file cannot be read or
+  /// copied so the caller can surface a meaningful error instead of silently
+  /// proceeding with a broken path.
   static Future<String> _copyInto(
     Directory dir,
     String sourcePath,
     String baseName,
   ) async {
+    final source = File(sourcePath);
+    if (!await source.exists()) {
+      throw StateError(
+        'Recording file not found at "$sourcePath". '
+        'The OS may have cleaned it up before the upload started.',
+      );
+    }
     final dot = sourcePath.lastIndexOf('.');
     final slash = sourcePath.lastIndexOf(RegExp(r'[/\\]'));
     final ext = (dot > slash && dot != -1) ? sourcePath.substring(dot) : '';
     final dest = '${dir.path}/$baseName$ext';
-    try {
-      await File(sourcePath).copy(dest);
-      return dest;
-    } catch (e) {
-      debugPrint('UploadQueueService: could not copy $sourcePath: $e');
-      return sourcePath;
-    }
+    await source.copy(dest);
+    debugPrint('UploadQueueService: copied $sourcePath → $dest');
+    return dest;
   }
 
   /// All jobs awaiting (re)upload, oldest first.

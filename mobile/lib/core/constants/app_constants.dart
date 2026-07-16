@@ -77,4 +77,7 @@ class AppConstants {
   /// web domain — replace with real Terms/Privacy pages before launch.
   static const String termsUrl = '$shareBaseUrl/terms';
   static const String privacyUrl = '$shareBaseUrl/privacy';
+
+  /// Human-readable version shown in Settings.
+  static const String appVersion = '1.0.0';
 }

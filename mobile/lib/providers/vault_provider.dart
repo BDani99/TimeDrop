@@ -122,6 +122,7 @@ class VaultProvider extends ChangeNotifier {
       longitude: capsule.longitude,
       encryptionKey: link?.encryptionKey,
       fromName: link?.fromName,
+      capsuleCreatedAt: capsule.createdAt,
     );
     await load(userId);
     return link;

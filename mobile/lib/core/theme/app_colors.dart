@@ -63,4 +63,8 @@ class AppColors {
   static const background = Color(0xFFFAF9F6);
   static const onBackground = Color(0xFF1A1C1A);
   static const surfaceVariant = Color(0xFFE3E2E0);
+
+  /// Warm, muted gold for ritual animations (seal, unlock, share). A softer,
+  /// lower-saturation tone than raw `#FFD700`, matching the Golden Hour mood.
+  static const ritualGold = Color(0xFFE3B778);
 }

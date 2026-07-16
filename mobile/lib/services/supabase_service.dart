@@ -167,17 +167,30 @@ class SupabaseService {
 
   /// Background-upload completion: attach the encrypted payload and flip the
   /// status (to 'ready' on success, or 'failed').
+  /// Throws [CapsuleException] if the row wasn't found or RLS blocked the
+  /// update (so callers don't silently leave the row in a stale state).
   static Future<void> updateCapsulePayload({
     required String capsuleId,
     String? encryptedPayload,
     required String status,
   }) async {
     try {
-      await client.from(SupabaseConstants.timeCapsulesTable).update({
-        'encrypted_payload': ?encryptedPayload,
-        'status': status,
-      }).eq('id', capsuleId);
+      final rows = await client
+          .from(SupabaseConstants.timeCapsulesTable)
+          .update({
+            'encrypted_payload': ?encryptedPayload,
+            'status': status,
+          })
+          .eq('id', capsuleId)
+          .select('id');
+      if ((rows as List).isEmpty) {
+        throw CapsuleException(
+          'Could not update capsule status to "$status" — '
+          'the row may not exist or auth context has changed.',
+        );
+      }
     } catch (e) {
+      if (e is CapsuleException) rethrow;
       throw CapsuleException('Could not finalize your capsule.', cause: e);
     }
   }
@@ -265,6 +278,7 @@ class SupabaseService {
     required double longitude,
     String? encryptionKey,
     String? fromName,
+    DateTime? capsuleCreatedAt,
   }) async {
     try {
       final payload = <String, dynamic>{
@@ -276,6 +290,7 @@ class SupabaseService {
         'longitude': longitude,
         'encryption_key': ?encryptionKey,
         'from_name': ?fromName,
+        'capsule_created_at': capsuleCreatedAt?.toUtc().toIso8601String(),
       };
       await client
           .from(SupabaseConstants.receivedCapsulesTable)
@@ -317,6 +332,21 @@ class SupabaseService {
     }
   }
 
+  static Future<void> markReceivedCapsuleUnlocked({
+    required String userId,
+    required String capsuleId,
+  }) async {
+    try {
+      await client
+          .from(SupabaseConstants.receivedCapsulesTable)
+          .update({'unlocked_at': DateTime.now().toUtc().toIso8601String()})
+          .eq('user_id', userId)
+          .eq('capsule_id', capsuleId);
+    } catch (e) {
+      throw CapsuleException('Could not update your gallery.', cause: e);
+    }
+  }
+
   static Future<void> markReceivedCapsuleViewed({
     required String userId,
     required String capsuleId,
@@ -324,7 +354,10 @@ class SupabaseService {
     try {
       await client
           .from(SupabaseConstants.receivedCapsulesTable)
-          .update({'is_viewed': true})
+          .update({
+            'is_viewed': true,
+            'viewed_at': DateTime.now().toUtc().toIso8601String(),
+          })
           .eq('user_id', userId)
           .eq('capsule_id', capsuleId);
     } catch (e) {

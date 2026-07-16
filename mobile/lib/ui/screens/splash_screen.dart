@@ -1,31 +1,16 @@
 import 'package:flutter/material.dart';
 
-import '../../core/theme/app_colors.dart';
-import '../../core/theme/app_spacing.dart';
-import '../../core/theme/app_typography.dart';
-
-/// Shown by `MainRouter` while it bootstraps auth + checks the clipboard.
-/// No logic here — purely decorative.
+/// Shown by [MainRouter] while it bootstraps auth + checks the clipboard.
+/// Background colour exactly matches the native OS splash screen
+/// (flutter_native_splash color #F1E8DF) so the transition is seamless.
 class SplashScreen extends StatelessWidget {
   const SplashScreen({super.key});
 
+  // Sampled from the top-left corner of assets/icon/splash.jpg.
+  static const _bgColor = Color(0xFFF1E8DF);
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.surface,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'TimeDrop',
-              style: AppTypography.displayLg.copyWith(color: AppColors.primary),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            const CircularProgressIndicator(color: AppColors.primary),
-          ],
-        ),
-      ),
-    );
+    return const Scaffold(backgroundColor: _bgColor);
   }
 }

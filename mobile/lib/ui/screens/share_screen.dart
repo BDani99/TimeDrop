@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../../core/haptics/app_haptics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/share_service.dart';
 import '../widgets/app_snackbar.dart';
+import '../widgets/glass/glass_panel.dart';
 import '../widgets/primary_button.dart';
+import '../widgets/rituals/crystal_share_orb.dart';
 
 /// "Moment Sealed" confirmation screen shown right after a capsule is
 /// created — shows the share code + lets the sender copy/share the link.
@@ -37,8 +40,8 @@ class ShareScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.check_circle, color: AppColors.primary, size: 72),
-              const SizedBox(height: AppSpacing.md),
+              CrystalShareOrb(shareId: shareId),
+              const SizedBox(height: AppSpacing.lg),
               Text(
                 'Your capsule is sealed!',
                 style: AppTypography.headlineLg,
@@ -46,44 +49,32 @@ class ShareScreen extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Your memory is safely hidden and ready to be shared with someone special.',
+                'This memory now exists only for one person.',
                 style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: AppSpacing.lg),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(AppSpacing.md),
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceContainerLowest,
-                  borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: AppColors.outlineVariant),
-                ),
-                child: Column(
+              GlassPanel(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text('SHARE CODE', style: AppTypography.labelSm),
-                    const SizedBox(height: AppSpacing.xs),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          shareId,
-                          style: AppTypography.headlineMd.copyWith(fontFamily: 'monospace'),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.copy, color: AppColors.primary),
-                          onPressed: () async {
-                            try {
-                              await ClipboardService.copyToClipboard(shareId);
-                              if (context.mounted) {
-                                AppSnackbar.showMessage(context, 'Copied!');
-                              }
-                            } catch (e) {
-                              if (context.mounted) AppSnackbar.showError(context, e);
-                            }
-                          },
-                        ),
-                      ],
+                    Text(
+                      shareId,
+                      style: AppTypography.headlineMd.copyWith(fontFamily: 'monospace'),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.copy, color: AppColors.primary),
+                      onPressed: () async {
+                        try {
+                          await ClipboardService.copyToClipboard(shareId);
+                          await AppHaptics.medium();
+                          if (context.mounted) {
+                            AppSnackbar.showMessage(context, 'Copied!');
+                          }
+                        } catch (e) {
+                          if (context.mounted) AppSnackbar.showError(context, e);
+                        }
+                      },
                     ),
                   ],
                 ),
@@ -94,6 +85,7 @@ class ShareScreen extends StatelessWidget {
                 onPressed: () async {
                   try {
                     await ShareService.shareCapsuleLink(url);
+                    await AppHaptics.medium();
                   } catch (e) {
                     if (context.mounted) AppSnackbar.showError(context, e);
                   }

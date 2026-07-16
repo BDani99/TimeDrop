@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/haptics/app_haptics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_radii.dart';
 import '../../core/theme/app_spacing.dart';
@@ -8,6 +9,7 @@ import '../../core/theme/app_typography.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../widgets/app_snackbar.dart';
+import '../widgets/glass/glass_panel.dart';
 import '../widgets/primary_button.dart';
 import 'paywall_screen.dart';
 
@@ -53,6 +55,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   void _select(String key, String value) {
+    AppHaptics.selection();
     setState(() => _answers[key] = value);
   }
 
@@ -170,34 +173,38 @@ class _OptionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return GlassPanel(
+      padding: EdgeInsets.zero,
       borderRadius: AppRadii.mdRadius,
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.sm + AppSpacing.xs,
-        ),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.secondaryContainer : AppColors.surfaceContainerLowest,
-          borderRadius: AppRadii.mdRadius,
-          border: Border.all(
-            color: selected ? AppColors.primary : AppColors.outlineVariant,
-            width: selected ? 2 : 1,
+      child: InkWell(
+        borderRadius: AppRadii.mdRadius,
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm + AppSpacing.xs,
           ),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                style: AppTypography.bodyMd.copyWith(
-                  color: selected ? AppColors.onSecondaryContainer : AppColors.onSurface,
+          decoration: BoxDecoration(
+            borderRadius: AppRadii.mdRadius,
+            border: Border.all(
+              color: selected ? AppColors.primary : Colors.transparent,
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: AppTypography.bodyMd.copyWith(
+                    color: selected ? AppColors.onSecondaryContainer : AppColors.onSurface,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  ),
                 ),
               ),
-            ),
-            if (selected) const Icon(Icons.check_circle, color: AppColors.primary, size: 20),
-          ],
+              if (selected) const Icon(Icons.check_circle, color: AppColors.primary, size: 20),
+            ],
+          ),
         ),
       ),
     );

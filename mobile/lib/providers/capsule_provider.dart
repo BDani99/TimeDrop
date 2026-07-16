@@ -38,6 +38,8 @@ class CapsuleProvider extends ChangeNotifier {
   String? decryptedNote;
   List<Uint8List> decryptedPhotos = const [];
   double? distanceMeters;
+  double? userLatitude;
+  double? userLongitude;
   RadarPhase radarPhase = RadarPhase.locating;
 
   StreamSubscription<Position>? _positionSubscription;
@@ -123,18 +125,33 @@ class CapsuleProvider extends ChangeNotifier {
       // Persist the job (and durable copies of the media) BEFORE kicking off
       // the upload, so it can be resumed if the app is killed mid-upload. The
       // background task reads from the durable copies, not the temp recording.
-      final job = await UploadQueueService.enqueue(
-        capsuleId: capsuleId,
-        shareId: shareId,
-        keyUrlSafe: keyUrlSafe,
-        mediaPath: mediaPath,
-        photoPaths: photoPaths,
-        mimeType: mimeType,
-        durationMs: durationMs,
-        creatorId: creatorId,
-        note: note,
-        coverPhotoIndex: coverPhotoIndex,
-      );
+      // If the media file is unreachable, `enqueue` throws immediately — we
+      // catch that here, mark the capsule as failed in the DB, and re-throw
+      // so the UI can show the user a meaningful error.
+      final UploadJob job;
+      try {
+        job = await UploadQueueService.enqueue(
+          capsuleId: capsuleId,
+          shareId: shareId,
+          keyUrlSafe: keyUrlSafe,
+          mediaPath: mediaPath,
+          photoPaths: photoPaths,
+          mimeType: mimeType,
+          durationMs: durationMs,
+          creatorId: creatorId,
+          note: note,
+          coverPhotoIndex: coverPhotoIndex,
+        );
+      } catch (e) {
+        _uploadStates[capsuleId] = CapsuleUploadState.failed;
+        await _safeMarkFailed(capsuleId);
+        // Wrap as CapsuleException so the UI shows a readable message.
+        throw CapsuleException(
+          'The recording file could not be saved for upload. '
+          'Please try recording again.',
+          cause: e,
+        );
+      }
 
       // Fire-and-forget: the provider is app-scoped, so this outlives the
       // navigation to ShareScreen / Home.
@@ -205,6 +222,17 @@ class CapsuleProvider extends ChangeNotifier {
   Future<void> _runUpload(UploadJob job, String keyUrlSafe) async {
     await UploadQueueService.markAttempt(job.capsuleId);
     try {
+      // Verify the durable media copy exists before starting the heavy pipeline.
+      // If it disappeared (OS cleanup, failed copy), surface a clear error now
+      // rather than an opaque failure deep inside the crypto/upload chain.
+      final mediaFile = File(job.mediaPath);
+      if (!await mediaFile.exists()) {
+        throw StateError(
+          'Media file missing at "${job.mediaPath}". '
+          'The recording was lost before the upload could start.',
+        );
+      }
+
       final encryptedPayload = await () async {
         final compressedPath = await VideoService.compress(job.mediaPath);
         return CryptoService.encryptAndUploadCapsule(
@@ -227,11 +255,12 @@ class CapsuleProvider extends ChangeNotifier {
       );
       _uploadStates[job.capsuleId] = CapsuleUploadState.ready;
       await UploadQueueService.remove(job.capsuleId);
-    } catch (e) {
+    } catch (e, st) {
       _uploadStates[job.capsuleId] = CapsuleUploadState.failed;
-      await _safeMarkFailed(job.capsuleId);
+      // Log the full stack trace so we can diagnose the root cause.
+      debugPrint('Capsule background upload failed (${job.capsuleId}): $e\n$st');
       // The job stays in the queue so the user (or the next launch) can retry.
-      debugPrint('Capsule background upload failed (${job.capsuleId}): $e');
+      await _safeMarkFailed(job.capsuleId);
     } finally {
       _bumpCapsulesChanged();
     }
@@ -303,6 +332,7 @@ class CapsuleProvider extends ChangeNotifier {
         longitude: capsule.longitude,
         encryptionKey: encryptionKey,
         fromName: fromName,
+        capsuleCreatedAt: capsule.createdAt,
       );
 
       radarPhase = capsule.isUnlocked ? RadarPhase.searching : RadarPhase.waiting;
@@ -345,6 +375,8 @@ class CapsuleProvider extends ChangeNotifier {
         endLng: capsule.longitude,
       );
       distanceMeters = meters;
+      userLatitude = position.latitude;
+      userLongitude = position.longitude;
 
       // Fuzzy unlocking: track how long we've stayed within the loose zone.
       // If the device sits inside it long enough, allow the unlock even if
@@ -431,7 +463,10 @@ class CapsuleProvider extends ChangeNotifier {
 
     final userId = _recipientUserId;
     if (userId != null) {
-      await SupabaseService.markReceivedCapsuleViewed(userId: userId, capsuleId: capsule.id);
+      await SupabaseService.markReceivedCapsuleUnlocked(
+        userId: userId,
+        capsuleId: capsule.id,
+      );
     }
   }
 
