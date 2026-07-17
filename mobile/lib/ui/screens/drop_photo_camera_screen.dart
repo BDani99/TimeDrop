@@ -84,6 +84,14 @@ class _DropPhotoCameraBodyState extends State<_DropPhotoCameraBody>
   /// Set after shutter — review before returning to the drop config screen.
   String? _previewPath;
 
+  double _zoomMin = 1.0;
+  double _zoomMax = 1.0;
+  double _zoom = 1.0;
+
+  /// Preview area aspect (width ÷ height) — used so the saved crop matches
+  /// what [BoxFit.cover] shows on screen.
+  double _viewportAspect = 9 / 16;
+
   late final AnimationController _lensSwitchController;
 
   @override
@@ -129,10 +137,48 @@ class _DropPhotoCameraBodyState extends State<_DropPhotoCameraBody>
       await controller.dispose();
       return;
     }
+    await _initZoom(controller);
+    if (!mounted) {
+      await controller.dispose();
+      return;
+    }
     setState(() {
       _controller = controller;
       _lensDirection = camera.lensDirection;
     });
+  }
+
+  Future<void> _initZoom(CameraController controller) async {
+    try {
+      final min = await controller.getMinZoomLevel();
+      final max = await controller.getMaxZoomLevel();
+      final start = 1.0.clamp(min, max);
+      await controller.setZoomLevel(start);
+      _zoomMin = min;
+      _zoomMax = max;
+      _zoom = start;
+    } catch (_) {
+      _zoomMin = 1.0;
+      _zoomMax = 1.0;
+      _zoom = 1.0;
+    }
+  }
+
+  Future<void> _setZoom(double value) async {
+    final controller = _controller;
+    if (controller == null || _isCapturing) return;
+    final clamped = value.clamp(_zoomMin, _zoomMax);
+    try {
+      await controller.setZoomLevel(clamped);
+      if (mounted) setState(() => _zoom = clamped);
+    } catch (_) {
+      // Some devices reject intermediate zoom steps — ignore.
+    }
+  }
+
+  void _nudgeZoom(double delta) {
+    final step = (_zoomMax - _zoomMin) / 20;
+    _setZoom(_zoom + delta * step);
   }
 
   Future<void> _switchCamera() async {
@@ -171,6 +217,7 @@ class _DropPhotoCameraBodyState extends State<_DropPhotoCameraBody>
     final controller = _controller;
     if (controller == null || _isCapturing) return;
     final mirror = context.read<SettingsProvider>().mirrorDropPhotos;
+    final viewportAspect = _viewportAspect;
     setState(() => _isCapturing = true);
     try {
       await AppHaptics.medium();
@@ -178,6 +225,7 @@ class _DropPhotoCameraBodyState extends State<_DropPhotoCameraBody>
       final processed = await PhotoProcessingService.processCameraCapture(
         sourcePath: file.path,
         mirror: mirror,
+        viewportAspectWidthOverHeight: viewportAspect,
       );
       if (!mounted) return;
       setState(() => _previewPath = processed);
@@ -223,12 +271,21 @@ class _DropPhotoCameraBodyState extends State<_DropPhotoCameraBody>
     }
 
     final flashAvailable = _lensDirection == CameraLensDirection.back;
+    final zoomEnabled = _zoomMax > _zoomMin + 0.01;
 
     return Stack(
       children: [
         Positioned.fill(
           child: LayoutBuilder(
             builder: (context, constraints) {
+              final aspect = constraints.maxWidth / constraints.maxHeight;
+              if ((aspect - _viewportAspect).abs() > 0.001) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted && (aspect - _viewportAspect).abs() > 0.001) {
+                    setState(() => _viewportAspect = aspect);
+                  }
+                });
+              }
               return AnimatedBuilder(
                 animation: _lensSwitchController,
                 builder: (context, child) {
@@ -291,6 +348,17 @@ class _DropPhotoCameraBodyState extends State<_DropPhotoCameraBody>
                         textAlign: TextAlign.center,
                         style: AppTypography.labelMd.copyWith(color: Colors.white70),
                       ),
+                      if (zoomEnabled) ...[
+                        const SizedBox(height: AppSpacing.xs),
+                        _CompactZoomControl(
+                          value: _zoom,
+                          min: _zoomMin,
+                          max: _zoomMax,
+                          enabled: !_isCapturing,
+                          onChanged: _setZoom,
+                          onNudge: _nudgeZoom,
+                        ),
+                      ],
                       const SizedBox(height: AppSpacing.sm),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -466,6 +534,132 @@ class _ReviewActionButton extends StatelessWidget {
           style: AppTypography.labelSm.copyWith(color: Colors.white70),
         ),
       ],
+    );
+  }
+}
+
+/// Compact zoom pill — small − / slider / + above the shutter.
+class _CompactZoomControl extends StatelessWidget {
+  const _CompactZoomControl({
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.enabled,
+    required this.onChanged,
+    required this.onNudge,
+  });
+
+  final double value;
+  final double min;
+  final double max;
+  final bool enabled;
+  final ValueChanged<double> onChanged;
+  final void Function(double delta) onNudge;
+
+  static String _formatZoom(double zoom) {
+    if (zoom >= 10) return '${zoom.round()}×';
+    final rounded = (zoom * 10).round() / 10;
+    return rounded == rounded.roundToDouble()
+        ? '${rounded.toInt()}×'
+        : '${rounded.toStringAsFixed(1)}×';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final atMin = value <= min + 0.01;
+    final atMax = value >= max - 0.01;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          _formatZoom(value),
+          style: AppTypography.labelSm.copyWith(
+            color: Colors.white.withValues(alpha: 0.55),
+            letterSpacing: 0.4,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+        const SizedBox(height: 4),
+        Container(
+          width: 132,
+          height: 28,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: Colors.black.withValues(alpha: 0.42),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.16),
+              width: 0.5,
+            ),
+          ),
+          child: Row(
+            children: [
+              _ZoomTapIcon(
+                icon: Icons.remove_rounded,
+                enabled: enabled && !atMin,
+                onTap: () => onNudge(-1),
+              ),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderThemeData(
+                    trackHeight: 1,
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4.5),
+                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                    activeTrackColor: Colors.white.withValues(alpha: 0.75),
+                    inactiveTrackColor: Colors.white.withValues(alpha: 0.22),
+                    thumbColor: Colors.white,
+                    overlayColor: Colors.white.withValues(alpha: 0.08),
+                    tickMarkShape: SliderTickMarkShape.noTickMark,
+                  ),
+                  child: Slider(
+                    value: value.clamp(min, max),
+                    min: min,
+                    max: max,
+                    onChanged: enabled ? onChanged : null,
+                  ),
+                ),
+              ),
+              _ZoomTapIcon(
+                icon: Icons.add_rounded,
+                enabled: enabled && !atMax,
+                onTap: () => onNudge(1),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ZoomTapIcon extends StatelessWidget {
+  const _ZoomTapIcon({
+    required this.icon,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: enabled ? onTap : null,
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: Icon(
+            icon,
+            size: 15,
+            color: enabled ? Colors.white.withValues(alpha: 0.9) : Colors.white30,
+          ),
+        ),
+      ),
     );
   }
 }

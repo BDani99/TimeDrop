@@ -5,21 +5,21 @@ import 'package:path_provider/path_provider.dart';
 
 /// Normalises camera captures before they are attached to a drop.
 ///
-/// Applies EXIF orientation (devices differ), centre-crops to a consistent
-/// portrait aspect ratio, and optionally mirrors horizontally.
+/// Applies EXIF orientation, centre-crops to the on-screen viewport aspect
+/// (so the saved JPEG matches the live [BoxFit.cover] preview), and
+/// optionally mirrors horizontally.
 class PhotoProcessingService {
   PhotoProcessingService._();
 
-  /// Portrait 3:4 — close to most phone sensors; prevents ultra-tall frames
-  /// (e.g. some OnePlus devices) from being stored as-is.
-  static const _aspectW = 3;
-  static const _aspectH = 4;
-
   /// Reads [sourcePath], normalises, and writes a new JPEG in temp storage.
   /// Returns the output path (falls back to [sourcePath] if decode fails).
+  ///
+  /// [viewportAspectWidthOverHeight] should match the preview area width ÷
+  /// height (typically [MediaQuery.sizeOf(context).width / height]).
   static Future<String> processCameraCapture({
     required String sourcePath,
     required bool mirror,
+    required double viewportAspectWidthOverHeight,
   }) async {
     try {
       final raw = await File(sourcePath).readAsBytes();
@@ -27,7 +27,7 @@ class PhotoProcessingService {
       if (decoded == null) return sourcePath;
 
       var image = img.bakeOrientation(decoded);
-      image = _centerCropAspect(image, _aspectW, _aspectH);
+      image = _centerCropToAspect(image, viewportAspectWidthOverHeight);
       if (mirror) {
         image = img.flipHorizontal(image);
       }
@@ -44,17 +44,17 @@ class PhotoProcessingService {
     }
   }
 
-  static img.Image _centerCropAspect(img.Image src, int aspectW, int aspectH) {
-    final target = aspectW / aspectH;
+  static img.Image _centerCropToAspect(img.Image src, double targetAspect) {
+    if (targetAspect <= 0) return src;
     final current = src.width / src.height;
 
-    if (current > target) {
-      final newWidth = (src.height * target).round();
+    if (current > targetAspect) {
+      final newWidth = (src.height * targetAspect).round();
       final x = (src.width - newWidth) ~/ 2;
       return img.copyCrop(src, x: x, y: 0, width: newWidth, height: src.height);
     }
 
-    final newHeight = (src.width / target).round();
+    final newHeight = (src.width / targetAspect).round();
     final y = (src.height - newHeight) ~/ 2;
     return img.copyCrop(src, x: 0, y: y, width: src.width, height: newHeight);
   }
