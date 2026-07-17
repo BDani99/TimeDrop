@@ -10,8 +10,10 @@ class SettingsProvider extends ChangeNotifier {
   UserSettingsModel? settings;
 
   /// Local preference: whether to display times in 24-hour format.
-  /// Defaults to false (12-hour AM/PM) until [loadLocalPrefs] is called.
-  bool use24HourTime = false;
+  bool use24HourTime = true;
+
+  /// Mirror photos taken with the camera when attaching to a drop.
+  bool mirrorDropPhotos = false;
 
   Future<void> load(String userId) async {
     settings = await SupabaseService.fetchUserSettings(userId);
@@ -22,6 +24,7 @@ class SettingsProvider extends ChangeNotifier {
   /// Call once at app start; safe to call multiple times.
   Future<void> loadLocalPrefs() async {
     use24HourTime = await LocalPrefsService.getUse24HourTime();
+    mirrorDropPhotos = await LocalPrefsService.getMirrorDropPhotos();
     notifyListeners();
   }
 
@@ -29,6 +32,12 @@ class SettingsProvider extends ChangeNotifier {
     use24HourTime = value;
     notifyListeners();
     await LocalPrefsService.setUse24HourTime(value);
+  }
+
+  Future<void> setMirrorDropPhotos(bool value) async {
+    mirrorDropPhotos = value;
+    notifyListeners();
+    await LocalPrefsService.setMirrorDropPhotos(value);
   }
 
   bool get freeDropUsed => settings?.freeDropUsed ?? false;

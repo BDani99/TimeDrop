@@ -185,6 +185,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ],
                 ),
+                const SizedBox(height: AppSpacing.sm),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Mirror camera photos', style: AppTypography.bodyMd),
+                          Text(
+                            context.watch<SettingsProvider>().mirrorDropPhotos
+                                ? 'Drop photos are flipped horizontally'
+                                : 'Drop photos keep the camera orientation',
+                            style: AppTypography.labelSm
+                                .copyWith(color: AppColors.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: context.watch<SettingsProvider>().mirrorDropPhotos,
+                      activeThumbColor: AppColors.primary,
+                      activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
+                      onChanged: (v) =>
+                          context.read<SettingsProvider>().setMirrorDropPhotos(v),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),

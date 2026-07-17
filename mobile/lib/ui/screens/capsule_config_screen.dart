@@ -28,6 +28,7 @@ import '../widgets/glass/glass_bottom_sheet.dart';
 import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/rituals/seal_ritual_overlay.dart';
 import '../widgets/primary_button.dart';
+import 'drop_photo_camera_screen.dart';
 import 'paywall_screen.dart';
 import 'share_screen.dart';
 
@@ -108,14 +109,15 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
 
   Future<void> _captureFromCamera() async {
     try {
-      final image = await ImagePicker().pickImage(
-        source: ImageSource.camera,
-        preferredCameraDevice: CameraDevice.rear,
+      final processed = await Navigator.push<String>(
+        context,
+        SpringPageRoute(page: const DropPhotoCameraScreen()),
       );
-      if (image == null || !mounted) return;
+      if (processed == null || !mounted) return;
+
       setState(() {
         if (_photoPaths.length < AppConstants.maxCapsulePhotos) {
-          _photoPaths.add(image.path);
+          _photoPaths.add(processed);
         }
         _coverPhotoIndex ??= 0;
       });
@@ -565,7 +567,7 @@ class _PhotoSourceSheet extends StatelessWidget {
             _PhotoSourceTile(
               icon: Icons.photo_camera_rounded,
               label: 'Take a photo',
-              subtitle: 'Capture the moment now',
+              subtitle: 'In-app camera — same look as video',
               emphasized: true,
               onTap: () => Navigator.pop(context, ImageSource.camera),
             ),

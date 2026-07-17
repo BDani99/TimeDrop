@@ -395,18 +395,14 @@ class _Thumb extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The thumb fills the full height of the card (set by IntrinsicHeight /
-    // CrossAxisAlignment.stretch in the parent Row), with a fixed width.
     return SizedBox(
       width: width,
+      height: width,
       child: bytes != null
           ? Image.memory(
               bytes!,
-              width: width,
               fit: BoxFit.cover,
               gaplessPlayback: true,
-              // Ensures the image fills the stretched height without gaps.
-              alignment: Alignment.center,
             )
           : Container(
               color: AppColors.surfaceContainer,

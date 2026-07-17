@@ -58,6 +58,9 @@ dependencies:
   # Photo attachments (up to 3 per capsule) from the gallery
   image_picker: ^1.1.2
 
+  # Decode / crop / mirror drop photo attachments after camera capture
+  image: ^4.5.4
+
   # Async video compression before upload (keeps Storage cost + memory down)
   video_compress: ^3.1.3
 

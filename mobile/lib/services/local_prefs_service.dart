@@ -11,6 +11,7 @@ class LocalPrefsService {
   static const _storage = FlutterSecureStorage();
 
   static const _keyUse24HourTime = 'pref_use_24h_time';
+  static const _keyMirrorDropPhotos = 'pref_mirror_drop_photos';
 
   static Future<bool> getUse24HourTime() async {
     final raw = await _storage.read(key: _keyUse24HourTime);
@@ -20,5 +21,19 @@ class LocalPrefsService {
 
   static Future<void> setUse24HourTime(bool value) async {
     await _storage.write(key: _keyUse24HourTime, value: value ? 'true' : 'false');
+  }
+
+  /// When true, photos taken with the in-app camera for a drop are mirrored
+  /// horizontally after capture (selfie-style). Gallery imports are untouched.
+  static Future<bool> getMirrorDropPhotos() async {
+    final raw = await _storage.read(key: _keyMirrorDropPhotos);
+    return raw == 'true';
+  }
+
+  static Future<void> setMirrorDropPhotos(bool value) async {
+    await _storage.write(
+      key: _keyMirrorDropPhotos,
+      value: value ? 'true' : 'false',
+    );
   }
 }

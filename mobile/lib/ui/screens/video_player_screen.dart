@@ -427,7 +427,18 @@ class _UnifiedGalleryState extends State<_UnifiedGallery> {
                 longitude: widget.longitude,
               );
             }
-            return Image.memory(widget.photos[i - 1], fit: BoxFit.contain);
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.memory(widget.photos[i - 1], fit: BoxFit.contain),
+                if (widget.capturedAt != null)
+                  Positioned(
+                    top: AppSpacing.sm,
+                    left: AppSpacing.md,
+                    child: WatermarkStamp(timestamp: widget.capturedAt!),
+                  ),
+              ],
+            );
           },
         ),
         if (totalPages > 1)
