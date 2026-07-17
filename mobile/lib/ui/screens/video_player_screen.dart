@@ -289,8 +289,6 @@ class _VideoStage extends StatelessWidget {
                     left: AppSpacing.md,
                     child: WatermarkStamp(
                       timestamp: capturedAt!,
-                      latitude: latitude,
-                      longitude: longitude,
                     ),
                   ),
               ],
@@ -467,8 +465,6 @@ class _VideoReplayPageState extends State<_VideoReplayPage> {
                   left: AppSpacing.md,
                   child: WatermarkStamp(
                     timestamp: widget.capturedAt!,
-                    latitude: widget.latitude,
-                    longitude: widget.longitude,
                   ),
                 ),
               if (!isPlaying)

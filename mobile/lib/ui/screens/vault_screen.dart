@@ -56,10 +56,13 @@ class _VaultScreenState extends State<VaultScreen> {
     if (_started) return;
     _started = true;
 
-    // If Home already hydrated the vault, paint immediately — don't flash a
-    // skeleton during the route transition (main Home↔Vault micro-lag source).
+    // _previews is already populated on re-entry (maintainState keeps state).
+    // On first navigation the map is empty, so we show the skeleton until
+    // thumbnails are warmed. If nothing is unlocked yet there's nothing to
+    // warm, so skip the skeleton immediately.
     final vault = context.read<VaultProvider>();
-    if (vault.receivedCapsules.isNotEmpty) {
+    final hasUnlocked = vault.receivedCapsules.any((c) => c.isViewed);
+    if (_previews.isNotEmpty || !hasUnlocked) {
       _thumbnailsWarmed = true;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
@@ -118,14 +121,17 @@ class _VaultScreenState extends State<VaultScreen> {
     final provider = context.read<VaultProvider>();
     final hadCache = provider.receivedCapsules.isNotEmpty;
 
-    // Only blank the UI when we have nothing to show yet.
-    if (!hadCache && mounted) {
+    // Blank the skeleton only when there's genuinely nothing to show AND we
+    // haven't already warmed previews (re-entry path keeps existing content).
+    if (!hadCache && _previews.isEmpty && mounted) {
       setState(() => _thumbnailsWarmed = false);
     }
 
     try {
       await provider.load(userId, silent: hadCache);
       if (!mounted) return;
+      // Wait for the incoming route transition so the thumbnail decode/precache
+      // doesn't compete with the animation compositor.
       await _waitForIncomingTransition();
       if (!mounted) return;
       await _warmThumbnails(provider.receivedCapsules);
@@ -416,13 +422,15 @@ class _TimelineView extends StatelessWidget {
           if (vault.ready.isNotEmpty) ...[
             _SectionLabel('Ready to open'),
             for (final item in vault.ready) ...[
-              _ReadyCard(
-                item: item,
-                onTap: () => onOpenReceived(item),
-                onLongPress: () => onOpenDetail(
-                  item,
-                  actionLabel: 'Go unlock',
-                  onAction: () => onOpenReceived(item),
+              RepaintBoundary(
+                child: _ReadyCard(
+                  item: item,
+                  onTap: () => onOpenReceived(item),
+                  onLongPress: () => onOpenDetail(
+                    item,
+                    actionLabel: 'Go unlock',
+                    onAction: () => onOpenReceived(item),
+                  ),
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
@@ -444,15 +452,17 @@ class _TimelineView extends StatelessWidget {
           if (vault.unlocked.isNotEmpty) ...[
             _SectionLabel('Unlocked'),
             for (final item in vault.unlocked) ...[
-              _UnlockedCard(
-                item: item,
-                preview: previews[item.capsuleId] ?? const _UnlockedPreview(),
-                isBusy: isReopening,
-                onTap: () => onReopen(item),
-                onLongPress: () => onOpenDetail(
-                  item,
-                  actionLabel: 'Replay',
-                  onAction: () => onReopen(item),
+              RepaintBoundary(
+                child: _UnlockedCard(
+                  item: item,
+                  preview: previews[item.capsuleId] ?? const _UnlockedPreview(),
+                  isBusy: isReopening,
+                  onTap: () => onReopen(item),
+                  onLongPress: () => onOpenDetail(
+                    item,
+                    actionLabel: 'Replay',
+                    onAction: () => onReopen(item),
+                  ),
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
@@ -1087,16 +1097,21 @@ class _RedeemSheetState extends State<_RedeemSheet> {
     // does NOT automatically pad for the keyboard — we must add viewInsets.bottom
     // ourselves. SafeArea handles the home indicator at the bottom.
     final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          AppSpacing.containerMargin,
-          AppSpacing.md,
-          AppSpacing.containerMargin,
-          AppSpacing.md + keyboardHeight,
-        ),
-        child: Column(
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.containerMargin,
+            AppSpacing.md,
+            AppSpacing.containerMargin,
+            AppSpacing.md + keyboardHeight,
+          ),
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1125,6 +1140,7 @@ class _RedeemSheetState extends State<_RedeemSheet> {
             PrimaryButton(label: 'Redeem', isLoading: _busy, onPressed: _submit),
             const SizedBox(height: AppSpacing.sm),
           ],
+        ),
         ),
       ),
     );

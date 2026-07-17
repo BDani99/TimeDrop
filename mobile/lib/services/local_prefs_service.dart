@@ -14,7 +14,8 @@ class LocalPrefsService {
 
   static Future<bool> getUse24HourTime() async {
     final raw = await _storage.read(key: _keyUse24HourTime);
-    return raw == 'true';
+    // Default is 24-hour time; only return false when explicitly set to 'false'.
+    return raw != 'false';
   }
 
   static Future<void> setUse24HourTime(bool value) async {

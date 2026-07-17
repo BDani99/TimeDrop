@@ -83,7 +83,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         padding: const EdgeInsets.all(AppSpacing.containerMargin),
         children: [
           // ── Account ────────────────────────────────────────────────────────
-          GlassPanel(
+          GlassPanel(useBlur: false,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -120,7 +120,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: AppSpacing.md),
 
           // ── Danger zone ────────────────────────────────────────────────────
-          GlassPanel(
+          GlassPanel(useBlur: false,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -149,7 +149,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: AppSpacing.md),
 
           // ── Display ───────────────────────────────────────────────────────
-          GlassPanel(
+          GlassPanel(useBlur: false,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -191,7 +191,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: AppSpacing.md),
 
           // ── Feedback ──────────────────────────────────────────────────────
-          GlassPanel(
+          GlassPanel(useBlur: false,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -222,7 +222,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: AppSpacing.md),
 
           // ── Legal ──────────────────────────────────────────────────────────
-          GlassPanel(
+          GlassPanel(useBlur: false,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -248,7 +248,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: AppSpacing.md),
 
           // ── About ──────────────────────────────────────────────────────────
-          GlassPanel(
+          GlassPanel(useBlur: false,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
