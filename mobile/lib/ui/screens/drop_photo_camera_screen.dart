@@ -176,9 +176,30 @@ class _DropPhotoCameraBodyState extends State<_DropPhotoCameraBody>
     }
   }
 
-  void _nudgeZoom(double delta) {
-    final step = (_zoomMax - _zoomMin) / 20;
-    _setZoom(_zoom + delta * step);
+  static const List<double> _zoomPresets = [0.5, 1.0, 2.0];
+
+  List<double> _availableZoomPresets() {
+    return _zoomPresets
+        .where((p) => p >= _zoomMin - 0.01 && p <= _zoomMax + 0.01)
+        .toList(growable: false);
+  }
+
+  double? _activeZoomPreset() {
+    double? closest;
+    var closestDistance = double.infinity;
+    for (final preset in _availableZoomPresets()) {
+      final distance = (_zoom - preset).abs();
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closest = preset;
+      }
+    }
+    return closestDistance <= 0.2 ? closest : null;
+  }
+
+  Future<void> _selectZoomPreset(double preset) async {
+    await AppHaptics.light();
+    await _setZoom(preset);
   }
 
   Future<void> _switchCamera() async {
@@ -271,7 +292,8 @@ class _DropPhotoCameraBodyState extends State<_DropPhotoCameraBody>
     }
 
     final flashAvailable = _lensDirection == CameraLensDirection.back;
-    final zoomEnabled = _zoomMax > _zoomMin + 0.01;
+    final zoomPresets = _availableZoomPresets();
+    final zoomEnabled = zoomPresets.length >= 2;
 
     return Stack(
       children: [
@@ -343,23 +365,15 @@ class _DropPhotoCameraBodyState extends State<_DropPhotoCameraBody>
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text(
-                        'Tap to capture',
-                        textAlign: TextAlign.center,
-                        style: AppTypography.labelMd.copyWith(color: Colors.white70),
-                      ),
                       if (zoomEnabled) ...[
-                        const SizedBox(height: AppSpacing.xs),
-                        _CompactZoomControl(
-                          value: _zoom,
-                          min: _zoomMin,
-                          max: _zoomMax,
+                        _ZoomPresetBar(
+                          presets: zoomPresets,
+                          selected: _activeZoomPreset(),
                           enabled: !_isCapturing,
-                          onChanged: _setZoom,
-                          onNudge: _nudgeZoom,
+                          onPresetSelected: _selectZoomPreset,
                         ),
+                        const SizedBox(height: AppSpacing.sm),
                       ],
-                      const SizedBox(height: AppSpacing.sm),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         crossAxisAlignment: CrossAxisAlignment.center,
@@ -538,125 +552,93 @@ class _ReviewActionButton extends StatelessWidget {
   }
 }
 
-/// Compact zoom pill — small − / slider / + above the shutter.
-class _CompactZoomControl extends StatelessWidget {
-  const _CompactZoomControl({
-    required this.value,
-    required this.min,
-    required this.max,
+/// Samsung-style preset zoom — .5 / 1 / 2 chips above the shutter.
+class _ZoomPresetBar extends StatelessWidget {
+  const _ZoomPresetBar({
+    required this.presets,
+    required this.selected,
     required this.enabled,
-    required this.onChanged,
-    required this.onNudge,
+    required this.onPresetSelected,
   });
 
-  final double value;
-  final double min;
-  final double max;
+  final List<double> presets;
+  final double? selected;
   final bool enabled;
-  final ValueChanged<double> onChanged;
-  final void Function(double delta) onNudge;
+  final ValueChanged<double> onPresetSelected;
 
-  static String _formatZoom(double zoom) {
-    if (zoom >= 10) return '${zoom.round()}×';
-    final rounded = (zoom * 10).round() / 10;
-    return rounded == rounded.roundToDouble()
-        ? '${rounded.toInt()}×'
-        : '${rounded.toStringAsFixed(1)}×';
+  static String _label(double preset) {
+    if (preset == 0.5) return '.5';
+    if (preset == 1.0) return '1';
+    return preset.toStringAsFixed(0);
   }
 
   @override
   Widget build(BuildContext context) {
-    final atMin = value <= min + 0.01;
-    final atMax = value >= max - 0.01;
-
-    return Column(
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          _formatZoom(value),
-          style: AppTypography.labelSm.copyWith(
-            color: Colors.white.withValues(alpha: 0.55),
-            letterSpacing: 0.4,
-            fontFeatures: const [FontFeature.tabularFigures()],
+        for (var i = 0; i < presets.length; i++) ...[
+          if (i > 0) const SizedBox(width: 18),
+          _ZoomPresetChip(
+            label: _label(presets[i]),
+            selected: selected == presets[i],
+            enabled: enabled,
+            onTap: () => onPresetSelected(presets[i]),
           ),
-        ),
-        const SizedBox(height: 4),
-        Container(
-          width: 132,
-          height: 28,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            color: Colors.black.withValues(alpha: 0.42),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.16),
-              width: 0.5,
-            ),
-          ),
-          child: Row(
-            children: [
-              _ZoomTapIcon(
-                icon: Icons.remove_rounded,
-                enabled: enabled && !atMin,
-                onTap: () => onNudge(-1),
-              ),
-              Expanded(
-                child: SliderTheme(
-                  data: SliderThemeData(
-                    trackHeight: 1,
-                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4.5),
-                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
-                    activeTrackColor: Colors.white.withValues(alpha: 0.75),
-                    inactiveTrackColor: Colors.white.withValues(alpha: 0.22),
-                    thumbColor: Colors.white,
-                    overlayColor: Colors.white.withValues(alpha: 0.08),
-                    tickMarkShape: SliderTickMarkShape.noTickMark,
-                  ),
-                  child: Slider(
-                    value: value.clamp(min, max),
-                    min: min,
-                    max: max,
-                    onChanged: enabled ? onChanged : null,
-                  ),
-                ),
-              ),
-              _ZoomTapIcon(
-                icon: Icons.add_rounded,
-                enabled: enabled && !atMax,
-                onTap: () => onNudge(1),
-              ),
-            ],
-          ),
-        ),
+        ],
       ],
     );
   }
 }
 
-class _ZoomTapIcon extends StatelessWidget {
-  const _ZoomTapIcon({
-    required this.icon,
+class _ZoomPresetChip extends StatelessWidget {
+  const _ZoomPresetChip({
+    required this.label,
+    required this.selected,
     required this.enabled,
     required this.onTap,
   });
 
-  final IconData icon;
+  final String label;
+  final bool selected;
   final bool enabled;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: enabled ? onTap : null,
-        child: SizedBox(
-          width: 28,
-          height: 28,
-          child: Icon(
-            icon,
-            size: 15,
-            color: enabled ? Colors.white.withValues(alpha: 0.9) : Colors.white30,
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
+        width: selected ? 38 : 30,
+        height: selected ? 38 : 30,
+        alignment: Alignment.center,
+        decoration: selected
+            ? BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.94),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.28),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              )
+            : null,
+        child: Text(
+          label,
+          style: AppTypography.labelSm.copyWith(
+            fontSize: selected ? 13 : 12,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+            color: selected
+                ? Colors.black87
+                : Colors.white.withValues(alpha: enabled ? 0.72 : 0.35),
+            height: 1,
+            fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
       ),
