@@ -46,6 +46,16 @@ class CapsuleProvider extends ChangeNotifier {
   String? _pendingEncryptionKey;
   String? _recipientUserId;
 
+  /// Guards against concurrent GPS events racing mid-decrypt. Without this,
+  /// a second position update can [notifyListeners] while [radarPhase] is
+  /// already [RadarPhase.unlocked] but [decryptedMediaBytes] is still null —
+  /// the Radar UI then locks `_hasUnlocked` and never navigates.
+  bool _unlockInFlight = false;
+  String? unlockError;
+
+  /// True while proximity has been met and decrypt/download is in flight.
+  bool get isUnlocking => _unlockInFlight && radarPhase != RadarPhase.unlocked;
+
   /// The encryption key for [activeCapsule], if one has been loaded via
   /// [loadCapsuleForRadar]. Exposed for Sprint 3's "keep this memory
   /// forever" flow, which persists it into `saved_memories`.
@@ -402,6 +412,12 @@ class CapsuleProvider extends ChangeNotifier {
   }) async {
     isLoadingRadar = true;
     radarPhase = RadarPhase.locating;
+    _unlockInFlight = false;
+    unlockError = null;
+    decryptedMediaBytes = null;
+    decryptedMetadata = null;
+    decryptedNote = null;
+    decryptedPhotos = const [];
     notifyListeners();
     try {
       final capsule = await SupabaseService.fetchCapsuleByShareId(shareId);
@@ -462,6 +478,21 @@ class CapsuleProvider extends ChangeNotifier {
 
     _positionSubscription?.cancel();
     _positionSubscription = GeolocationService.watchPosition().listen((position) async {
+      // Already unlocked (or decrypt running) — still refresh distance for the
+      // UI, but never re-enter the unlock path.
+      if (_unlockInFlight || radarPhase == RadarPhase.unlocked) {
+        distanceMeters = GeolocationService.distanceInMeters(
+          startLat: position.latitude,
+          startLng: position.longitude,
+          endLat: capsule.latitude,
+          endLng: capsule.longitude,
+        );
+        userLatitude = position.latitude;
+        userLongitude = position.longitude;
+        notifyListeners();
+        return;
+      }
+
       final meters = GeolocationService.distanceInMeters(
         startLat: position.latitude,
         startLng: position.longitude,
@@ -500,9 +531,24 @@ class CapsuleProvider extends ChangeNotifier {
           meters <= threshold || (meters - accuracyBonus) <= threshold;
 
       if (capsule.isUnlocked && (withinProximity || fuzzyUnlockAllowed)) {
-        if (radarPhase != RadarPhase.unlocked) {
-          radarPhase = RadarPhase.unlocked;
+        // Decrypt FIRST, flip phase ONLY after media is ready. Flipping early
+        // let concurrent GPS events notifyListeners with null bytes and stuck
+        // the Radar on "The moment is yours" forever.
+        _unlockInFlight = true;
+        unlockError = null;
+        notifyListeners();
+        try {
           await _decryptActiveCapsule();
+          if (decryptedMediaBytes != null && decryptedMetadata != null) {
+            radarPhase = RadarPhase.unlocked;
+            stopWatchingPosition();
+          } else {
+            unlockError = 'This memory could not be opened.';
+            _unlockInFlight = false;
+          }
+        } catch (e) {
+          unlockError = e.toString();
+          _unlockInFlight = false;
         }
       } else if (capsule.isUnlocked) {
         radarPhase = RadarPhase.searching;
@@ -519,7 +565,9 @@ class CapsuleProvider extends ChangeNotifier {
   Future<void> _decryptActiveCapsule() async {
     final capsule = activeCapsule;
     final key = _pendingEncryptionKey;
-    if (capsule?.encryptedPayload == null || key == null) return;
+    if (capsule?.encryptedPayload == null || key == null) {
+      throw const CapsuleException('This memory is not ready to open yet.');
+    }
 
     final metadata = await CryptoService.decryptMetadata(
       encryptedPayloadBase64: capsule!.encryptedPayload!,

@@ -48,6 +48,20 @@ class ReceivedCapsuleModel {
   bool get hasKey => encryptionKey != null;
   bool get isUnlockTimeReached => DateTime.now().toUtc().isAfter(unlockTime.toUtc());
 
+  /// Time has passed and we hold the decryption key — user can go to Radar.
+  bool get isReadyToDiscover =>
+      !isViewed && isUnlockTimeReached && hasKey;
+
+  /// Still waiting on the clock and/or the full share link.
+  bool get isWaiting =>
+      !isViewed && (!isUnlockTimeReached || !hasKey);
+
+  /// The recipient has watched the memory at least once.
+  bool get isOpened => isViewed;
+
+  /// Radar proximity unlock completed (may still be unwatched).
+  bool get hasBeenUnlockedAtLocation => unlockedAt != null;
+
   /// "From X · City" subtitle for Vault cards.
   String get senderLabel {
     final name = (fromName != null && fromName!.isNotEmpty) ? fromName! : 'someone';

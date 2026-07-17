@@ -169,20 +169,21 @@ class _PaywallScreenState extends State<PaywallScreen> {
                 // ── Features ─────────────────────────────────────────────────
                 const _FeatureRow(
                   icon: Icons.videocam_outlined,
-                  text: 'Video Memories a month',
+                  text: 'Video Memories / month',
                   value: '${AppConstants.premiumMonthlyVideoLimit}',
                 ),
                 const _FeatureRow(
                   icon: Icons.photo_library_outlined,
-                  text: 'Unlimited Photo Drops',
+                  text: 'Photo Drops / month',
+                  value: '${AppConstants.premiumMonthlyPhotoLimit}',
                 ),
                 const _FeatureRow(
                   icon: Icons.lock_outline,
                   text: 'End-to-End Encrypted',
                 ),
                 const _FeatureRow(
-                  icon: Icons.cloud_done_outlined,
-                  text: 'Permanent Safekeeping',
+                  icon: Icons.schedule_outlined,
+                  text: 'Timed Delivery — Your Way',
                 ),
                 const SizedBox(height: AppSpacing.lg),
 
@@ -291,15 +292,15 @@ class _PaywallHero extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Hourglass icon
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.18),
-              borderRadius: BorderRadius.circular(16),
+          // App icon — no frame
+          ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Image.asset(
+              'assets/icon/android_icon.png',
+              width: 56,
+              height: 56,
+              fit: BoxFit.cover,
             ),
-            child: const Icon(Icons.hourglass_bottom, color: Colors.white, size: 32),
           )
               .animate()
               .scale(begin: const Offset(0.7, 0.7), duration: 500.ms, curve: Curves.easeOutBack),
@@ -362,17 +363,13 @@ class _PlanCard extends StatelessWidget {
             ),
             const SizedBox(width: AppSpacing.sm),
             Expanded(
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Flexible(
-                    child: Text(
-                      title,
-                      style: AppTypography.headlineMd,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
+                  Text(title, style: AppTypography.headlineMd),
                   if (badge != null) ...[
-                    const SizedBox(width: AppSpacing.sm),
+                    const SizedBox(height: 2),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 2),
                       decoration: BoxDecoration(

@@ -7,6 +7,7 @@ import '../../core/haptics/app_haptics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
+import '../widgets/navigation/opaque_page_route.dart';
 import '../widgets/radar/particle_system.dart';
 import 'video_player_screen.dart';
 
@@ -86,10 +87,12 @@ class _UnlockSequenceScreenState extends State<UnlockSequenceScreen>
 
   void _goToPlayer() {
     if (!mounted) return;
+    // Opaque (no FadeTransition): Android video textures fail under opacity
+    // animations and never attach — playback appears permanently stuck.
     Navigator.pushReplacement(
       context,
-      PageRouteBuilder(
-        pageBuilder: (_, _, _) => VideoPlayerScreen(
+      OpaquePageRoute(
+        page: VideoPlayerScreen(
           mediaBytes: widget.mediaBytes,
           mimeType: widget.mimeType,
           note: widget.note,
@@ -100,9 +103,6 @@ class _UnlockSequenceScreenState extends State<UnlockSequenceScreen>
           latitude: widget.latitude,
           longitude: widget.longitude,
         ),
-        transitionsBuilder: (_, animation, _, child) =>
-            FadeTransition(opacity: animation, child: child),
-        transitionDuration: const Duration(milliseconds: 500),
       ),
     );
   }

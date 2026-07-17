@@ -129,7 +129,10 @@ flutter:
   # Note: assets/icon/ holds build-time-only source images for
   # flutter_launcher_icons + flutter_native_splash (read by path at generation
   # time), so they are intentionally NOT registered as bundled assets here.
-  #
+  # Exception: android_icon.png is also used at runtime in PaywallScreen.
+  assets:
+    - assets/icon/android_icon.png
+
   # To add runtime assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

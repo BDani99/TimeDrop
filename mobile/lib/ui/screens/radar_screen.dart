@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -21,7 +22,7 @@ import '../widgets/loading/skeleton_box.dart';
 import '../widgets/permission_gate.dart';
 import '../widgets/primary_button.dart';
 import '../widgets/radar/sci_fi_radar_view.dart';
-import '../widgets/navigation/spring_page_route.dart';
+import '../widgets/navigation/opaque_page_route.dart';
 import '../router/app_router.dart';
 import 'unlock_sequence_screen.dart';
 
@@ -230,6 +231,32 @@ class _RadarScreenState extends State<RadarScreen> {
           WidgetsBinding.instance.addPostFrameCallback((_) => provider.startWatchingPosition());
         }
         WidgetsBinding.instance.addPostFrameCallback((_) => _syncHeartbeat(distance));
+        // Decrypt in progress after proximity — keep the radar UI but show
+        // a clear "opening" state instead of jumping to a stuck spinner.
+        if (provider.unlockError != null) {
+          return _RadarLayout(
+            title: 'Could not open this memory.',
+            subtitle: 'Check your connection and try again.',
+            child: PrimaryButton(
+              label: 'Go back',
+              onPressed: _exit,
+            ),
+          );
+        }
+        if (provider.isUnlocking) {
+          return const _RadarLayout(
+            title: 'Opening your memory…',
+            subtitle: 'Decrypting securely.',
+            child: SizedBox(
+              width: 72,
+              height: 72,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                color: AppColors.primary,
+              ),
+            ),
+          );
+        }
         return _RadarLayout(
           title: DistanceMotivation.titleFor(distance, isClosing: closing),
           subtitle: distance != null ? DistanceMotivation.messageFor(distance) : null,
@@ -241,18 +268,32 @@ class _RadarScreenState extends State<RadarScreen> {
         );
 
       case RadarPhase.unlocked:
+        // Media is guaranteed ready when the provider flips to unlocked.
+        final mediaBytes = provider.decryptedMediaBytes;
+        final metadata = provider.decryptedMetadata;
+        if (mediaBytes == null || metadata == null) {
+          return const _RadarLayout(
+            title: 'The moment is yours.',
+            child: SizedBox(
+              width: 72,
+              height: 72,
+              child: CircularProgressIndicator(
+                strokeWidth: 3,
+                color: AppColors.primary,
+              ),
+            ),
+          );
+        }
         if (!_hasUnlocked) {
           _hasUnlocked = true;
           _heartbeatTimer?.cancel();
-          final mediaBytes = provider.decryptedMediaBytes;
-          final metadata = provider.decryptedMetadata;
           final note = provider.decryptedNote;
-          final photos = provider.decryptedPhotos;
+          final photos = List<Uint8List>.from(provider.decryptedPhotos);
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted || mediaBytes == null || metadata == null) return;
+            if (!mounted) return;
             Navigator.pushReplacement(
               context,
-              SpringPageRoute(
+              OpaquePageRoute(
                 page: UnlockSequenceScreen(
                   mediaBytes: mediaBytes,
                   mimeType: metadata.mimeType,
@@ -270,9 +311,16 @@ class _RadarScreenState extends State<RadarScreen> {
             );
           });
         }
-        return _RadarLayout(
+        return const _RadarLayout(
           title: 'The moment is yours.',
-          child: const SkeletonBox(width: 180, height: 180, borderRadius: 999),
+          child: SizedBox(
+            width: 72,
+            height: 72,
+            child: CircularProgressIndicator(
+              strokeWidth: 3,
+              color: AppColors.primary,
+            ),
+          ),
         );
     }
   }
@@ -295,6 +343,7 @@ class _RadarLayout extends StatelessWidget {
       padding: const EdgeInsets.all(AppSpacing.containerMargin),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(title, style: AppTypography.headlineMd, textAlign: TextAlign.center),
           if (subtitle != null) ...[
@@ -306,7 +355,7 @@ class _RadarLayout extends StatelessWidget {
             ),
           ],
           const SizedBox(height: AppSpacing.lg),
-          child,
+          Center(child: child),
         ],
       ),
     );

@@ -19,6 +19,10 @@ class VideoPreRoll extends StatefulWidget {
 }
 
 class _VideoPreRollState extends State<VideoPreRoll> {
+  static const _slideDuration = Duration(milliseconds: 1800);
+  static const _pauseBetween = Duration(milliseconds: 650);
+  static const _finalHold = Duration(milliseconds: 1400);
+
   static const _months = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
@@ -56,7 +60,13 @@ class _VideoPreRollState extends State<VideoPreRoll> {
         child: AnimatedTextKit(
           isRepeatingAnimation: false,
           totalRepeatCount: 1,
-          onFinished: widget.onComplete,
+          pause: _pauseBetween,
+          onFinished: () {
+            // Keep the last line on screen before handing off to playback.
+            Future<void>.delayed(_finalHold, () {
+              if (mounted) widget.onComplete();
+            });
+          },
           animatedTexts: [
             FadeAnimatedText(
               'Recorded',
@@ -64,17 +74,17 @@ class _VideoPreRollState extends State<VideoPreRoll> {
                 color: Colors.white,
                 fontSize: 36,
               ),
-              duration: const Duration(milliseconds: 900),
+              duration: _slideDuration,
             ),
             FadeAnimatedText(
               _dateLabel,
               textStyle: AppTypography.headlineLg.copyWith(color: Colors.white70),
-              duration: const Duration(milliseconds: 900),
+              duration: _slideDuration,
             ),
             FadeAnimatedText(
               _relativeLabel,
               textStyle: AppTypography.bodyLg.copyWith(color: Colors.white54),
-              duration: const Duration(milliseconds: 900),
+              duration: _slideDuration,
             ),
           ],
         ),

@@ -26,6 +26,7 @@ import 'gift_received_screen.dart';
 import 'paywall_screen.dart';
 import 'radar_screen.dart';
 import 'video_player_screen.dart';
+import '../widgets/navigation/opaque_page_route.dart';
 import '../widgets/navigation/spring_page_route.dart';
 
 enum VaultView { timeline, map, calendar }
@@ -41,7 +42,7 @@ class VaultScreen extends StatefulWidget {
 
 class _VaultScreenState extends State<VaultScreen> {
   VaultView _view = VaultView.timeline;
-  bool _isReopening = false;
+  String? _reopeningCapsuleId;
   bool _thumbnailsWarmed = false;
   bool _started = false;
 
@@ -61,7 +62,7 @@ class _VaultScreenState extends State<VaultScreen> {
     // thumbnails are warmed. If nothing is unlocked yet there's nothing to
     // warm, so skip the skeleton immediately.
     final vault = context.read<VaultProvider>();
-    final hasUnlocked = vault.receivedCapsules.any((c) => c.isViewed);
+    final hasUnlocked = vault.receivedCapsules.any((c) => c.isOpened);
     if (_previews.isNotEmpty || !hasUnlocked) {
       _thumbnailsWarmed = true;
     }
@@ -72,7 +73,7 @@ class _VaultScreenState extends State<VaultScreen> {
   /// `precacheImage`s each cover so the first paint is instant.
   Future<void> _warmThumbnails(List<ReceivedCapsuleModel> items) async {
     final results = await Future.wait([
-      for (final item in items.where((c) => c.isViewed))
+      for (final item in items.where((c) => c.isOpened))
         () async {
           final cover = await MediaCacheService.coverPhoto(item.capsuleId);
           final note = await MediaCacheService.noteFor(item.capsuleId);
@@ -206,14 +207,14 @@ class _VaultScreenState extends State<VaultScreen> {
   }
 
   Future<void> _reopen(ReceivedCapsuleModel item) async {
-    if (_isReopening) return;
-    setState(() => _isReopening = true);
+    if (_reopeningCapsuleId != null) return;
+    setState(() => _reopeningCapsuleId = item.capsuleId);
     try {
       final content = await context.read<VaultProvider>().reopen(item);
       if (!mounted) return;
       Navigator.push(
         context,
-        SpringPageRoute(
+        OpaquePageRoute(
           page: VideoPlayerScreen(
             mediaBytes: content.mediaBytes,
             mimeType: content.mimeType,
@@ -227,10 +228,17 @@ class _VaultScreenState extends State<VaultScreen> {
           ),
         ),
       );
+    } on CapsuleReplayException catch (e) {
+      if (!mounted) return;
+      if (e.reason == CapsuleReplayReason.needsRadar) {
+        _openRadar(item);
+      } else {
+        AppSnackbar.showMessage(context, e.message);
+      }
     } catch (e) {
       if (mounted) AppSnackbar.showError(context, e);
     } finally {
-      if (mounted) setState(() => _isReopening = false);
+      if (mounted) setState(() => _reopeningCapsuleId = null);
     }
   }
 
@@ -321,7 +329,7 @@ class _VaultScreenState extends State<VaultScreen> {
               children: [
                 _TimelineView(
                   vault: vault,
-                  isReopening: _isReopening,
+                  reopeningCapsuleId: _reopeningCapsuleId,
                   onRefresh: _load,
                   onOpenReceived: _openReceived,
                   onReopen: _reopen,
@@ -336,7 +344,7 @@ class _VaultScreenState extends State<VaultScreen> {
                 VaultCalendarView(
                   items: vault.receivedCapsules,
                   onSelect: (ReceivedCapsuleModel item) {
-                    if (item.isViewed) {
+                    if (item.isOpened) {
                       _reopen(item);
                     } else if (item.hasKey) {
                       _openReceived(item);
@@ -381,7 +389,7 @@ class _VaultLoadingSkeleton extends StatelessWidget {
 class _TimelineView extends StatelessWidget {
   const _TimelineView({
     required this.vault,
-    required this.isReopening,
+    required this.reopeningCapsuleId,
     required this.onRefresh,
     required this.onOpenReceived,
     required this.onReopen,
@@ -390,7 +398,7 @@ class _TimelineView extends StatelessWidget {
   });
 
   final VaultProvider vault;
-  final bool isReopening;
+  final String? reopeningCapsuleId;
   final Future<void> Function() onRefresh;
   final void Function(ReceivedCapsuleModel) onOpenReceived;
   final void Function(ReceivedCapsuleModel) onReopen;
@@ -449,14 +457,14 @@ class _TimelineView extends StatelessWidget {
             ],
             const SizedBox(height: AppSpacing.md),
           ],
-          if (vault.unlocked.isNotEmpty) ...[
-            _SectionLabel('Unlocked'),
-            for (final item in vault.unlocked) ...[
+          if (vault.opened.isNotEmpty) ...[
+            _SectionLabel('Opened'),
+            for (final item in vault.opened) ...[
               RepaintBoundary(
                 child: _UnlockedCard(
                   item: item,
                   preview: previews[item.capsuleId] ?? const _UnlockedPreview(),
-                  isBusy: isReopening,
+                  isBusy: reopeningCapsuleId == item.capsuleId,
                   onTap: () => onReopen(item),
                   onLongPress: () => onOpenDetail(
                     item,
@@ -471,7 +479,7 @@ class _TimelineView extends StatelessWidget {
           if (!vault.isLoading &&
               vault.ready.isEmpty &&
               vault.waiting.isEmpty &&
-              vault.unlocked.isEmpty)
+              vault.opened.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
               child: Text(
@@ -693,7 +701,9 @@ class _ReadyCardState extends State<_ReadyCard> with SingleTickerProviderStateMi
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Ready to discover. Tap to open Radar.',
+                      widget.item.hasBeenUnlockedAtLocation
+                          ? 'You found it — tap to finish opening.'
+                          : 'Ready to discover. Tap to open Radar.',
                       style: AppTypography.labelSm.copyWith(color: Colors.white70),
                     ),
                   ],
@@ -809,8 +819,9 @@ class _UnlockedCard extends StatelessWidget {
           borderRadius: AppRadii.mdRadius,
           border: Border.all(color: AppColors.outlineVariant),
         ),
-        clipBehavior: Clip.antiAlias,
-        child: Row(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(AppRadii.md - 1),
+          child: Row(
           children: [
             SizedBox(
               width: 92,
@@ -845,6 +856,13 @@ class _UnlockedCard extends StatelessWidget {
                         style: AppTypography.labelSm
                             .copyWith(color: AppColors.onSurfaceVariant),
                       ),
+                    ] else ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        'Tap to replay',
+                        style: AppTypography.labelSm
+                            .copyWith(color: AppColors.onSurfaceVariant),
+                      ),
                     ],
                   ],
                 ),
@@ -860,6 +878,7 @@ class _UnlockedCard extends StatelessWidget {
                 ),
               ),
           ],
+        ),
         ),
       ),
     );
@@ -945,10 +964,10 @@ class _MapViewState extends State<_MapView>
                     width: 48,
                     height: 48,
                     child: GestureDetector(
-                      onTap: () => item.isViewed
+                      onTap: () => item.isOpened
                           ? widget.onReopen(item)
                           : widget.onOpenReceived(item),
-                      child: item.isViewed
+                      child: item.isOpened
                           ? _CoverMarker(capsuleId: item.capsuleId)
                           : const _PulsingMarker(),
                     ),

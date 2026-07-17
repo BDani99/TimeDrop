@@ -251,11 +251,14 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
       preview = FileImage(File(_photoPaths[_coverPhotoIndex!]));
     }
 
-    // Ritual first (no button spinner), then reserve + navigate — never stack
-    // the overlay with the PrimaryButton loading state.
+    // Kick off the reserve concurrently with the ritual animation so the
+    // config screen never flashes between the overlay dismissing and the
+    // ShareScreen appearing. reserveCapsule() is a fast DB insert + schedules
+    // a background upload, so it almost always finishes before the ritual ends.
+    final sealFuture = _seal();
     await SealRitualOverlay.show(context, previewImage: preview);
     if (!mounted) return;
-    await _seal();
+    await sealFuture; // navigation is handled inside _seal()
   }
 
   Future<void> _seal() async {
@@ -269,8 +272,6 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
     final capsuleProvider = context.read<CapsuleProvider>();
     final authProvider = context.read<AuthProvider>();
 
-    // Capture before async gaps; navigate immediately after reserve so the
-    // config screen's isCreating spinner never sits under ShareScreen.
     try {
       final userId = authProvider.userId;
       if (userId == null) {
@@ -293,6 +294,8 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
         creatorId: userId,
       );
       if (!mounted) return;
+      // Navigate as soon as reserve is done; if the ritual is still playing it
+      // will simply be replaced — the user sees a clean transition.
       Navigator.pushReplacement(
         context,
         SpringPageRoute(

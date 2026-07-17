@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -13,7 +14,6 @@ import '../../providers/auth_provider.dart';
 import '../../services/supabase_service.dart';
 import '../router/app_router.dart';
 import '../widgets/app_snackbar.dart';
-import '../widgets/loading/skeleton_box.dart';
 import '../widgets/modals/post_open_upsell_sheet.dart';
 import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/primary_button.dart';
@@ -58,6 +58,41 @@ class VideoPlayerScreen extends StatefulWidget {
   State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
 }
 
+/// Shown while the video file is being written to disk and the controller
+/// is initialising. A dark frosted card with a spinner replaces the
+/// stark white SkeletonBox on the black background.
+class _VideoLoadingPlaceholder extends StatelessWidget {
+  const _VideoLoadingPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 240,
+          height: 320,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: const Center(
+            child: CircularProgressIndicator(
+              color: Colors.white38,
+              strokeWidth: 2,
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'Loading memory…',
+          style: TextStyle(color: Colors.white38, fontSize: 13),
+        ),
+      ],
+    );
+  }
+}
+
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   VideoPlayerController? _controller;
   bool _isReady = false;
@@ -72,23 +107,54 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     super.initState();
     _showPreRoll = !widget.skipPreRoll && widget.capturedAt != null;
     _preRollDone = widget.skipPreRoll || widget.capturedAt == null;
-    _init();
+    // Defer controller init until after the route is fully settled. Creating a
+    // VideoPlayer under a fading / snapshotting route leaves the Android
+    // texture detached — the UI looks ready but playback never starts.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _waitForRouteThenInit());
+  }
+
+  Future<void> _waitForRouteThenInit() async {
+    if (!mounted) return;
+    final animation = ModalRoute.of(context)?.animation;
+    if (animation != null && !animation.isCompleted) {
+      final done = Completer<void>();
+      void onStatus(AnimationStatus status) {
+        if (status == AnimationStatus.completed ||
+            status == AnimationStatus.dismissed) {
+          animation.removeStatusListener(onStatus);
+          if (!done.isCompleted) done.complete();
+        }
+      }
+      animation.addStatusListener(onStatus);
+      await done.future;
+    }
+    if (!mounted) return;
+    await _init();
   }
 
   Future<void> _init() async {
     try {
+      if (widget.mediaBytes.isEmpty) {
+        throw StateError('Memory media is empty.');
+      }
       final dir = await getTemporaryDirectory();
-      final ext = widget.mimeType.contains('mp4') ? 'mp4' : 'mov';
-      final file = File('${dir.path}/capsule_${DateTime.now().millisecondsSinceEpoch}.$ext');
-      await file.writeAsBytes(widget.mediaBytes);
+      final ext = widget.mimeType.contains('mp4')
+          ? 'mp4'
+          : widget.mimeType.contains('webm')
+              ? 'webm'
+              : 'mov';
+      final file = File(
+        '${dir.path}/capsule_${DateTime.now().millisecondsSinceEpoch}.$ext',
+      );
+      await file.writeAsBytes(widget.mediaBytes, flush: true);
 
       final controller = VideoPlayerController.file(file);
       await controller.initialize();
-      controller.addListener(_onVideoTick);
       if (!mounted) {
         await controller.dispose();
         return;
       }
+      controller.addListener(_onVideoTick);
       setState(() {
         _controller = controller;
         _isReady = true;
@@ -116,7 +182,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     final note = widget.note;
     if (note == null || note.isEmpty) return;
     final typingMs = 220 + note.length * 42;
-    const dwellMs = 6000;
+    const dwellMs = 9000;
     Future.delayed(Duration(milliseconds: typingMs + dwellMs), () {
       if (mounted) setState(() => _showNote = false);
     });
@@ -201,11 +267,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 Expanded(
                   child: Center(
                     child: !_isReady || controller == null
-                        ? const SkeletonBox(
-                            width: 240,
-                            height: 320,
-                            borderRadius: 24,
-                          )
+                        ? const _VideoLoadingPlaceholder()
                         : showGallery
                             ? _UnifiedGallery(
                                 controller: controller,

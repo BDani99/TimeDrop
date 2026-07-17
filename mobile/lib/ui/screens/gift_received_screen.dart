@@ -11,6 +11,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/presented_shares_service.dart';
 import '../../services/supabase_service.dart';
 import '../router/app_router.dart';
+import 'home_screen.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/countdown_timer.dart';
 import '../widgets/loading/skeleton_box.dart';
@@ -99,7 +100,7 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
     return c.isUnlocked && !c.isPending;
   }
 
-  void _saveToVault() {
+  void _goBack() {
     if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     } else {
@@ -107,29 +108,27 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
     }
   }
 
+  void _openVault() {
+    // Navigate to the app home with the Vault tab open.
+    Navigator.of(context).pushAndRemoveUntil(
+      SpringPageRoute(page: const HomeScreen()),
+      (route) => false,
+    );
+  }
+
   void _openNow() {
     final nav = Navigator.of(context);
+    final radarPage = SpringPageRoute(
+      page: RadarScreen(
+        shareId: widget.shareId,
+        encryptionKey: widget.encryptionKey,
+        fromName: widget.fromName,
+      ),
+    );
     if (nav.canPop()) {
-      nav.pushReplacement(
-        SpringPageRoute(
-          page: RadarScreen(
-            shareId: widget.shareId,
-            encryptionKey: widget.encryptionKey,
-            fromName: widget.fromName,
-          ),
-        ),
-      );
+      nav.pushReplacement(radarPage);
     } else {
-      nav.pushAndRemoveUntil(
-        SpringPageRoute(
-          page: RadarScreen(
-            shareId: widget.shareId,
-            encryptionKey: widget.encryptionKey,
-            fromName: widget.fromName,
-          ),
-        ),
-        (route) => false,
-      );
+      nav.pushAndRemoveUntil(radarPage, (route) => false);
     }
   }
 
@@ -145,7 +144,7 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
         elevation: 0,
         leading: IconButton(
           icon: Icon(canPop ? Icons.arrow_back : Icons.close),
-          onPressed: _saveToVault,
+          onPressed: _goBack,
         ),
       ),
       body: SafeArea(
@@ -154,7 +153,7 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
           child: _loading
               ? const _GiftSkeleton()
               : _failed
-                  ? _GiftError(onClose: _saveToVault)
+                  ? _GiftError(onClose: _goBack)
                   : Column(
                       children: [
                         const Spacer(flex: 2),
@@ -183,7 +182,7 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
                         Text(
                           _isReady
                               ? 'It\'s ready to discover — find the place and open it.'
-                              : 'It isn\'t open yet. When the time comes, find it in your Vault.',
+                              : 'It\'s been saved to your Vault. When the time comes, open it there.',
                           textAlign: TextAlign.center,
                           style: AppTypography.bodyMd.copyWith(
                             color: AppColors.onSurfaceVariant,
@@ -194,20 +193,11 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
                           CountdownTimer(target: _capsule!.unlockTime),
                         ],
                         const Spacer(flex: 3),
-                        if (_isReady)
-                          PrimaryButton(
-                            label: 'Open now',
-                            onPressed: _openNow,
-                          )
-                        else
-                          PrimaryButton(
-                            label: 'Saved to your Vault',
-                            onPressed: _saveToVault,
-                          ),
-                        const SizedBox(height: AppSpacing.sm),
-                        if (_isReady)
+                        if (_isReady) ...[
+                          PrimaryButton(label: 'Open now', onPressed: _openNow),
+                          const SizedBox(height: AppSpacing.sm),
                           TextButton(
-                            onPressed: _saveToVault,
+                            onPressed: _goBack,
                             child: Text(
                               'Save for later',
                               style: AppTypography.labelMd.copyWith(
@@ -215,6 +205,12 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
                               ),
                             ),
                           ),
+                        ] else if (!canPop) ...[
+                          // Fresh receive from a link: guide user to the Vault.
+                          PrimaryButton(label: 'Open My Vault', onPressed: _openVault),
+                        ],
+                        // When canPop=true (came from the Vault), no bottom button
+                        // is needed — the AppBar back arrow is sufficient.
                       ],
                     ),
         ),

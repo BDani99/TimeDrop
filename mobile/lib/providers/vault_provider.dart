@@ -20,22 +20,23 @@ class VaultProvider extends ChangeNotifier {
 
   /// Ready to physically go unlock: time has passed, not yet viewed, and we
   /// hold the key.
-  List<ReceivedCapsuleModel> get ready => receivedCapsules
-      .where((c) => !c.isViewed && c.isUnlockTimeReached && c.hasKey)
-      .toList();
+  List<ReceivedCapsuleModel> get ready =>
+      receivedCapsules.where((c) => c.isReadyToDiscover).toList();
 
   /// Still time-locked (or missing the key) and not yet viewed.
-  List<ReceivedCapsuleModel> get waiting => receivedCapsules
-      .where((c) => !c.isViewed && !(c.isUnlockTimeReached && c.hasKey))
-      .toList();
+  List<ReceivedCapsuleModel> get waiting =>
+      receivedCapsules.where((c) => c.isWaiting).toList();
 
   /// Already opened at least once — replayable from cache.
-  List<ReceivedCapsuleModel> get unlocked =>
-      receivedCapsules.where((c) => c.isViewed).toList();
+  List<ReceivedCapsuleModel> get opened =>
+      receivedCapsules.where((c) => c.isOpened).toList();
 
-  int get unlockedCount => unlocked.length;
+  /// @deprecated Use [opened] — kept as alias for callers not yet migrated.
+  List<ReceivedCapsuleModel> get unlocked => opened;
 
-  int get cityCount => unlocked
+  int get unlockedCount => opened.length;
+
+  int get cityCount => opened
       .map((c) => c.city)
       .where((city) => city != null && city.isNotEmpty)
       .toSet()
@@ -131,6 +132,9 @@ class VaultProvider extends ChangeNotifier {
   /// Re-opens an already-viewed capsule for replay — cache-first (offline),
   /// falling back to download + decrypt (e.g. after a reinstall), and
   /// re-caching so the next replay is offline.
+  ///
+  /// Throws [CapsuleReplayException.needsRadar] when the memory was never
+  /// fully retrieved and the caller should route to [RadarScreen] instead.
   Future<DecryptedCapsule> reopen(ReceivedCapsuleModel item) async {
     final cached = await MediaCacheService.get(item.capsuleId);
     if (cached != null) {
@@ -143,16 +147,28 @@ class VaultProvider extends ChangeNotifier {
       );
     }
 
-    final key = item.encryptionKey;
-    if (key == null) {
+    if (!item.hasKey) {
       throw const CapsuleException('The full link is needed to open this memory.');
     }
-    final capsule = await SupabaseService.fetchCapsuleByShareId(item.shareId);
-    if (capsule?.encryptedPayload == null) {
-      throw const CapsuleException('This memory is not unlocked yet.');
+    if (!item.isUnlockTimeReached) {
+      throw CapsuleReplayException.notOpenYet();
     }
+
+    final capsule = await SupabaseService.fetchCapsuleByShareId(item.shareId);
+    if (capsule == null) {
+      throw const CapsuleException('This memory could not be found.');
+    }
+    if (capsule.isPending) {
+      throw const CapsuleException('This memory is still sealing. Try again in a moment.');
+    }
+    if (capsule.encryptedPayload == null) {
+      // Viewed flag set but payload never landed — send back to discovery.
+      throw CapsuleReplayException.needsRadar();
+    }
+
+    final key = item.encryptionKey!;
     final metadata = await CryptoService.decryptMetadata(
-      encryptedPayloadBase64: capsule!.encryptedPayload!,
+      encryptedPayloadBase64: capsule.encryptedPayload!,
       encryptionKeyUrlSafe: key,
     );
     final mediaBytes = await CryptoService.decryptBlob(
@@ -181,6 +197,30 @@ class VaultProvider extends ChangeNotifier {
       coverPhotoIndex: metadata.coverPhotoIndex,
     );
   }
+}
+
+/// Thrown by [VaultProvider.reopen] when replay cannot proceed and the UI
+/// should fall back to the Radar discovery flow.
+enum CapsuleReplayReason { needsRadar, notOpenYet }
+
+class CapsuleReplayException implements Exception {
+  CapsuleReplayException._(this.reason, this.message);
+
+  final CapsuleReplayReason reason;
+  final String message;
+
+  factory CapsuleReplayException.needsRadar() => CapsuleReplayException._(
+        CapsuleReplayReason.needsRadar,
+        'Find the place again to open this memory.',
+      );
+
+  factory CapsuleReplayException.notOpenYet() => CapsuleReplayException._(
+        CapsuleReplayReason.notOpenYet,
+        'This memory is not open yet.',
+      );
+
+  @override
+  String toString() => message;
 }
 
 /// Fully decrypted capsule content ready for playback (video + optional note

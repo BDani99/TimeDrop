@@ -45,7 +45,7 @@ class _VaultCalendarViewState extends State<VaultCalendarView> {
 
   Map<DateTime, List<ReceivedCapsuleModel>> get _byDay {
     final map = <DateTime, List<ReceivedCapsuleModel>>{};
-    for (final item in widget.items.where((c) => c.isViewed)) {
+    for (final item in widget.items.where((c) => c.isOpened)) {
       // Group by the day the capsule was *created* (recorded), not when it
       // was unlocked or viewed — this mirrors how a journal works.
       final raw = item.capsuleCreatedAt ?? item.unlockTime;
@@ -322,19 +322,21 @@ class _MemoryCardState extends State<_MemoryCard> {
           borderRadius: AppRadii.mdRadius,
           border: Border.all(color: AppColors.outlineVariant),
         ),
-        clipBehavior: Clip.antiAlias,
-        child: FutureBuilder<_CardData>(
-          future: _dataFuture,
-          builder: (context, snap) {
-            final data = snap.data ?? const _CardData();
-            // IntrinsicHeight lets the thumbnail stretch to the full card height
-            // while the content column drives the height.
-            return IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(AppRadii.md - 1),
+          child: FutureBuilder<_CardData>(
+            future: _dataFuture,
+            builder: (context, snap) {
+              final data = snap.data ?? const _CardData();
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  // Thumbnail: fixed 80px wide, full card height
-                  _Thumb(bytes: data.cover, width: _thumbSize),
+                  // Thumbnail: fixed square
+                  SizedBox(
+                    width: _thumbSize,
+                    height: _thumbSize,
+                    child: _Thumb(bytes: data.cover, width: _thumbSize),
+                  ),
 
                   // Content
                   Expanded(
@@ -368,9 +370,9 @@ class _MemoryCardState extends State<_MemoryCard> {
                     ),
                   ),
                 ],
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );
