@@ -12,6 +12,7 @@ import '../../core/theme/app_typography.dart';
 import '../../providers/payment_provider.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/glass/glass_panel.dart';
+import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/primary_button.dart';
 import 'home_screen.dart';
 
@@ -83,7 +84,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     if (widget.isOnboarding) {
       Navigator.pushAndRemoveUntil(
         context,
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        SpringPageRoute(page: const HomeScreen()),
         (route) => false,
       );
     } else {
@@ -133,7 +134,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     // so this just enters the app with the free capsule intact.
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
+      SpringPageRoute(page: const HomeScreen()),
       (route) => false,
     );
   }

@@ -20,6 +20,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/capsule_provider.dart';
 import '../../providers/payment_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../core/utils/date_format_helper.dart';
 import '../../services/geolocation_service.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/loading/skeleton_box.dart';
@@ -59,6 +60,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
   /// but refined as the user pans the map under the fixed centre pin.
   LatLng? _selectedLatLng;
   final _mapController = MapController();
+  bool _mapEditing = false;
   DateTime? _unlockTime;
   final _noteController = TextEditingController();
   final _nameController = TextEditingController();
@@ -240,7 +242,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
       );
     } on PaymentException {
       if (!mounted) return;
-      Navigator.push(context, MaterialPageRoute(builder: (_) => const PaywallScreen()));
+      Navigator.push(context, SpringPageRoute(page: const PaywallScreen()));
       return;
     }
 
@@ -249,6 +251,8 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
       preview = FileImage(File(_photoPaths[_coverPhotoIndex!]));
     }
 
+    // Ritual first (no button spinner), then reserve + navigate — never stack
+    // the overlay with the PrimaryButton loading state.
     await SealRitualOverlay.show(context, previewImage: preview);
     if (!mounted) return;
     await _seal();
@@ -265,6 +269,8 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
     final capsuleProvider = context.read<CapsuleProvider>();
     final authProvider = context.read<AuthProvider>();
 
+    // Capture before async gaps; navigate immediately after reserve so the
+    // config screen's isCreating spinner never sits under ShareScreen.
     try {
       final userId = authProvider.userId;
       if (userId == null) {
@@ -273,6 +279,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
       if (settingsProvider.displayName != name) {
         await settingsProvider.setDisplayName(userId, name);
       }
+      if (!mounted) return;
       final info = await capsuleProvider.reserveCapsule(
         mediaPath: widget.videoPath,
         mimeType: widget.mimeType,
@@ -303,14 +310,8 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
   }
 
   String _formatDateTime(DateTime dt) {
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-    ];
-    final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
-    final minute = dt.minute.toString().padLeft(2, '0');
-    final amPm = dt.hour < 12 ? 'AM' : 'PM';
-    return '${months[dt.month - 1]} ${dt.day}, ${dt.year} · $hour:$minute $amPm';
+    final use24h = context.read<SettingsProvider>().use24HourTime;
+    return formatCapsuleDateTime(dt, use24h: use24h);
   }
 
   @override
@@ -323,7 +324,17 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
         child: ListView(
           padding: const EdgeInsets.all(AppSpacing.containerMargin),
           children: [
-            Text('Where to hide it', style: AppTypography.headlineMd),
+            Row(
+              children: [
+                Expanded(child: Text('Where to hide it', style: AppTypography.headlineMd)),
+                TextButton.icon(
+                  onPressed: () => setState(() => _mapEditing = !_mapEditing),
+                  icon: Icon(_mapEditing ? Icons.lock_open_outlined : Icons.edit_location_alt_outlined,
+                      size: 18),
+                  label: Text(_mapEditing ? 'Done' : 'Edit'),
+                ),
+              ],
+            ),
             const SizedBox(height: AppSpacing.sm),
             SizedBox(
               height: 220,
@@ -342,17 +353,16 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
                                   initialCenter: _selectedLatLng ??
                                       LatLng(_position!.latitude, _position!.longitude),
                                   initialZoom: 16,
-                                  interactionOptions: const InteractionOptions(
-                                    flags: InteractiveFlag.drag |
-                                        InteractiveFlag.pinchZoom |
-                                        InteractiveFlag.flingAnimation |
-                                        InteractiveFlag.doubleTapZoom,
+                                  interactionOptions: InteractionOptions(
+                                    flags: _mapEditing
+                                        ? InteractiveFlag.drag |
+                                            InteractiveFlag.pinchZoom |
+                                            InteractiveFlag.flingAnimation |
+                                            InteractiveFlag.doubleTapZoom
+                                        : InteractiveFlag.none,
                                   ),
-                                  // The centre of the map is the chosen spot; the
-                                  // pin below is fixed to the centre and the map
-                                  // pans underneath it.
                                   onPositionChanged: (camera, hasGesture) {
-                                    _selectedLatLng = camera.center;
+                                    if (hasGesture) _selectedLatLng = camera.center;
                                   },
                                 ),
                                 children: [
@@ -364,9 +374,6 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
                                   ),
                                 ],
                               ),
-                              // Fixed centre pin. Offset up by half its height so
-                              // its tip points at the exact map centre. IgnorePointer
-                              // so map gestures pass straight through.
                               const IgnorePointer(
                                 child: Padding(
                                   padding: EdgeInsets.only(bottom: 40),
@@ -377,13 +384,47 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
                                   ),
                                 ),
                               ),
+                              if (!_mapEditing)
+                                Positioned.fill(
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: () => setState(() => _mapEditing = true),
+                                      child: Align(
+                                        alignment: Alignment.bottomCenter,
+                                        child: Padding(
+                                          padding: const EdgeInsets.only(bottom: 10),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black54,
+                                              borderRadius: BorderRadius.circular(20),
+                                            ),
+                                            child: const Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(Icons.edit_location_alt_outlined,
+                                                    color: Colors.white, size: 16),
+                                                SizedBox(width: 6),
+                                                Text('Tap to edit location',
+                                                    style: TextStyle(color: Colors.white, fontSize: 13)),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              'Drag the map to place the pin exactly where you want it.',
+              _mapEditing
+                  ? 'Drag the map to move the pin, then tap Done.'
+                  : 'Tap the map to change where this memory is hidden.',
               style: AppTypography.labelSm.copyWith(color: AppColors.onSurfaceVariant),
             ),
             const SizedBox(height: AppSpacing.lg),
@@ -402,6 +443,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
               controller: _noteController,
               maxLength: AppConstants.maxNoteLength,
               maxLines: 3,
+              textCapitalization: TextCapitalization.sentences,
               decoration: const InputDecoration(hintText: 'Add a note (optional)'),
             ),
             const SizedBox(height: AppSpacing.md),
@@ -623,16 +665,18 @@ class _PhotoStrip extends StatelessWidget {
                 child: Stack(
                   children: [
                     Container(
+                      width: 88,
+                      height: 88,
                       decoration: BoxDecoration(
                         borderRadius: AppRadii.smRadius,
                         border: Border.all(
                           color: coverIndex == i ? AppColors.primary : Colors.transparent,
                           width: 3,
                         ),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: AppRadii.smRadius,
-                        child: Image.file(File(paths[i]), width: 88, height: 88, fit: BoxFit.cover),
+                        image: DecorationImage(
+                          image: FileImage(File(paths[i])),
+                          fit: BoxFit.cover,
+                        ),
                       ),
                     ),
                     if (coverIndex == i)

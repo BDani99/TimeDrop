@@ -210,6 +210,24 @@ class SupabaseService {
     }
   }
 
+  /// Returns only rows with status = 'pending' for the given creator — used by
+  /// [CapsuleProvider.reconcileStuckCapsules] to detect orphaned rows.
+  static Future<List<CapsuleModel>> fetchPendingCapsules(String creatorId) async {
+    try {
+      final rows = await client
+          .from(SupabaseConstants.timeCapsulesTable)
+          .select()
+          .eq('creator_id', creatorId)
+          .eq('status', 'pending')
+          .order('created_at', ascending: false);
+      return (rows as List)
+          .map((row) => CapsuleModel.fromJson(row as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      throw CapsuleException('Could not check pending capsules.', cause: e);
+    }
+  }
+
   /// Persists a reverse-geocoded city label for a sent capsule (best effort —
   /// Home fills this lazily so it isn't recomputed each load). Mirrors
   /// [updateReceivedCapsuleCity]; relies on the `time_capsules_update_own`
@@ -225,6 +243,31 @@ class SupabaseService {
           .eq('id', capsuleId);
     } catch (e) {
       throw CapsuleException('Could not update your capsule.', cause: e);
+    }
+  }
+
+  /// Updates unlock time / pin for a capsule the current user created, and
+  /// syncs denormalized fields on every `received_capsules` row for that id.
+  static Future<void> updateSentCapsuleMeta({
+    required String capsuleId,
+    required DateTime unlockTime,
+    required double latitude,
+    required double longitude,
+    String? city,
+  }) async {
+    try {
+      await client.rpc(
+        SupabaseConstants.updateSentCapsuleMetaRpc,
+        params: {
+          'p_capsule_id': capsuleId,
+          'p_unlock_time': unlockTime.toUtc().toIso8601String(),
+          'p_latitude': latitude,
+          'p_longitude': longitude,
+          'p_city': city,
+        },
+      );
+    } catch (e) {
+      throw CapsuleException('Could not update this memory.', cause: e);
     }
   }
 
@@ -377,6 +420,28 @@ class SupabaseService {
           .toList();
     } catch (e) {
       throw CapsuleException('Could not load your gallery.', cause: e);
+    }
+  }
+
+  /// Inserts a feedback / bug-report row.
+  /// [type] must be one of: 'bug', 'feedback', 'other'.
+  static Future<void> submitFeedback({
+    required String userId,
+    required String type,
+    required String message,
+    required String appVersion,
+    required String platform,
+  }) async {
+    try {
+      await client.from(SupabaseConstants.feedbackTable).insert({
+        'user_id': userId,
+        'type': type,
+        'message': message.trim(),
+        'app_version': appVersion,
+        'platform': platform,
+      });
+    } catch (e) {
+      throw FeedbackException('Could not send your feedback. Please try again.', cause: e);
     }
   }
 }

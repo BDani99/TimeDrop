@@ -10,6 +10,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/glass/glass_panel.dart';
+import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/primary_button.dart';
 import 'paywall_screen.dart';
 
@@ -81,7 +82,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const PaywallScreen(isOnboarding: true)),
+        SpringPageRoute(page: const PaywallScreen(isOnboarding: true)),
       );
     } catch (e) {
       if (!mounted) return;

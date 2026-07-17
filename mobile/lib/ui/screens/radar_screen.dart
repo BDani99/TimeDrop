@@ -21,6 +21,7 @@ import '../widgets/loading/skeleton_box.dart';
 import '../widgets/permission_gate.dart';
 import '../widgets/primary_button.dart';
 import '../widgets/radar/sci_fi_radar_view.dart';
+import '../widgets/navigation/spring_page_route.dart';
 import '../router/app_router.dart';
 import 'unlock_sequence_screen.dart';
 
@@ -251,8 +252,8 @@ class _RadarScreenState extends State<RadarScreen> {
             if (!mounted || mediaBytes == null || metadata == null) return;
             Navigator.pushReplacement(
               context,
-              MaterialPageRoute(
-                builder: (_) => UnlockSequenceScreen(
+              SpringPageRoute(
+                page: UnlockSequenceScreen(
                   mediaBytes: mediaBytes,
                   mimeType: metadata.mimeType,
                   note: note,
@@ -261,6 +262,9 @@ class _RadarScreenState extends State<RadarScreen> {
                   capsuleId: capsule.id,
                   latitude: capsule.latitude,
                   longitude: capsule.longitude,
+                  fromName: widget.fromName,
+                  placeLabel: capsule.city,
+                  distanceMeters: distance,
                 ),
               ),
             );

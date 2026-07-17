@@ -1,13 +1,20 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_radii.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/settings_provider.dart';
+import '../../services/supabase_service.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/glass/glass_panel.dart';
+import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/primary_button.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -141,6 +148,105 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: AppSpacing.md),
 
+          // ── Display ───────────────────────────────────────────────────────
+          GlassPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(children: [
+                  const Icon(Icons.tune_outlined, color: AppColors.onSurfaceVariant),
+                  const SizedBox(width: AppSpacing.sm),
+                  Text('Display', style: AppTypography.headlineMd),
+                ]),
+                const SizedBox(height: AppSpacing.sm),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('24-hour time', style: AppTypography.bodyMd),
+                          Text(
+                            context.watch<SettingsProvider>().use24HourTime
+                                ? 'Times shown as 14:30'
+                                : 'Times shown as 2:30 PM',
+                            style: AppTypography.labelSm
+                                .copyWith(color: AppColors.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: context.watch<SettingsProvider>().use24HourTime,
+                      activeThumbColor: AppColors.primary,
+                      activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
+                      onChanged: (v) =>
+                          context.read<SettingsProvider>().setUse24HourTime(v),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+
+          // ── Feedback ──────────────────────────────────────────────────────
+          GlassPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(children: [
+                  const Icon(Icons.bug_report_outlined, color: AppColors.onSurfaceVariant),
+                  const SizedBox(width: AppSpacing.sm),
+                  Text('Feedback', style: AppTypography.headlineMd),
+                ]),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'Found a bug or have a suggestion? Let us know.',
+                  style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                _SettingsTile(
+                  icon: Icons.bug_report_outlined,
+                  label: 'Report a bug',
+                  onTap: () => _showFeedbackSheet(context, initialType: 'bug'),
+                ),
+                _SettingsTile(
+                  icon: Icons.lightbulb_outline,
+                  label: 'Send feedback',
+                  onTap: () => _showFeedbackSheet(context, initialType: 'feedback'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+
+          // ── Legal ──────────────────────────────────────────────────────────
+          GlassPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(children: [
+                  const Icon(Icons.gavel_outlined, color: AppColors.onSurfaceVariant),
+                  const SizedBox(width: AppSpacing.sm),
+                  Text('Legal', style: AppTypography.headlineMd),
+                ]),
+                const SizedBox(height: AppSpacing.xs),
+                _SettingsTile(
+                  icon: Icons.shield_outlined,
+                  label: 'Privacy Policy',
+                  onTap: () => _openUrl(context, AppConstants.privacyUrl),
+                ),
+                _SettingsTile(
+                  icon: Icons.article_outlined,
+                  label: 'Terms of Service',
+                  onTap: () => _openUrl(context, AppConstants.termsUrl),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+
           // ── About ──────────────────────────────────────────────────────────
           GlassPanel(
             child: Column(
@@ -171,7 +277,223 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
+Future<void> _openUrl(BuildContext context, String url) async {
+  try {
+    final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the link.')),
+      );
+    }
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the link.')),
+      );
+    }
+  }
+}
+
+Future<void> _showFeedbackSheet(BuildContext context, {required String initialType}) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) => _FeedbackSheet(initialType: initialType),
+  );
+}
+
+class _SettingsTile extends StatelessWidget {
+  const _SettingsTile({required this.icon, required this.label, required this.onTap});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: AppColors.onSurfaceVariant),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(label, style: AppTypography.bodyMd),
+            ),
+            const Icon(Icons.arrow_forward_ios, size: 14, color: AppColors.onSurfaceVariant),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Feedback bottom sheet ──────────────────────────────────────────────────
+
+class _FeedbackSheet extends StatefulWidget {
+  const _FeedbackSheet({required this.initialType});
+  final String initialType;
+
+  @override
+  State<_FeedbackSheet> createState() => _FeedbackSheetState();
+}
+
+class _FeedbackSheetState extends State<_FeedbackSheet> {
+  late String _type;
+  final _controller = TextEditingController();
+  bool _sending = false;
+
+  static const _types = [
+    ('bug', Icons.bug_report_outlined, 'Bug report'),
+    ('feedback', Icons.lightbulb_outline, 'Feedback / idea'),
+    ('other', Icons.chat_bubble_outline, 'Other'),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _type = widget.initialType;
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final message = _controller.text.trim();
+    if (message.isEmpty) {
+      AppSnackbar.showMessage(context, 'Please write something before sending.');
+      return;
+    }
+    final userId = context.read<AuthProvider>().userId;
+    if (userId == null) {
+      AppSnackbar.showMessage(context, 'You need to be signed in.');
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      await SupabaseService.submitFeedback(
+        userId: userId,
+        type: _type,
+        message: message,
+        appVersion: AppConstants.appVersion,
+        platform: Platform.isIOS ? 'ios' : 'android',
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      AppSnackbar.showSuccess(context, 'Thanks — we\'ll take a look!');
+    } catch (e) {
+      if (mounted) AppSnackbar.showError(context, e);
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: AppRadii.lgRadius,
+      ),
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.containerMargin,
+        AppSpacing.lg,
+        AppSpacing.containerMargin,
+        AppSpacing.containerMargin + bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Handle
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.outlineVariant,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          Text('Send us a message', style: AppTypography.headlineLg),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'Your message goes straight to our inbox — no email needed.',
+            style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
+          ),
+          const SizedBox(height: AppSpacing.md),
+
+          // Type selector chips
+          Wrap(
+            spacing: AppSpacing.sm,
+            children: [
+              for (final (value, icon, label) in _types)
+                ChoiceChip(
+                  avatar: Icon(icon, size: 16),
+                  label: Text(label),
+                  selected: _type == value,
+                  onSelected: (_) => setState(() => _type = value),
+                  selectedColor: AppColors.primary.withValues(alpha: 0.15),
+                  checkmarkColor: AppColors.primary,
+                  side: BorderSide(
+                    color: _type == value ? AppColors.primary : AppColors.outlineVariant,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+
+          // Message field
+          TextField(
+            controller: _controller,
+            maxLines: 5,
+            maxLength: 2000,
+            textCapitalization: TextCapitalization.sentences,
+            autofocus: true,
+            decoration: InputDecoration(
+              hintText: _type == 'bug'
+                  ? 'Describe what happened and what you expected…'
+                  : _type == 'feedback'
+                      ? 'Share your idea or suggestion…'
+                      : 'Write your message…',
+              filled: true,
+              fillColor: AppColors.surfaceContainerLowest,
+              border: OutlineInputBorder(borderRadius: AppRadii.mdRadius),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: AppRadii.mdRadius,
+                borderSide: BorderSide(color: AppColors.outlineVariant.withValues(alpha: 0.6)),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: AppRadii.mdRadius,
+                borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+
+          PrimaryButton(
+            label: 'Send',
+            isLoading: _sending,
+            onPressed: _send,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Convenience navigator entry point used from HomeScreen.
 void openSettingsScreen(BuildContext context) {
-  Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsScreen()));
+  Navigator.of(context).push(SpringPageRoute(page: const SettingsScreen()));
 }

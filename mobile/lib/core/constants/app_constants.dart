@@ -35,6 +35,15 @@ class AppConstants {
   static const Duration videoCompressTimeout = Duration(seconds: 90);
   static const Duration uploadTimeout = Duration(minutes: 3);
 
+  /// Timeout for individual Supabase DB/RPC calls (not Storage uploads, which
+  /// are covered by [uploadTimeout]). Keeps a stalled TCP connection from
+  /// leaving a capsule stuck on 'pending' forever.
+  static const Duration dbCallTimeout = Duration(seconds: 30);
+
+  /// A 'pending' capsule with no queue entry that is older than this is
+  /// considered stuck and will be auto-failed by reconcileStuckCapsules().
+  static const Duration stuckPendingThreshold = Duration(minutes: 10);
+
   /// Max automatic attempts for a background upload before it's left as
   /// `failed` for the user to retry manually.
   static const int uploadMaxAttempts = 3;
@@ -77,6 +86,8 @@ class AppConstants {
   /// web domain — replace with real Terms/Privacy pages before launch.
   static const String termsUrl = '$shareBaseUrl/terms';
   static const String privacyUrl = '$shareBaseUrl/privacy';
+  static const String bugReportUrl = 'mailto:support@timedrop.app?subject=Bug%20Report';
+  static const String feedbackUrl = 'mailto:support@timedrop.app?subject=Feedback';
 
   /// Human-readable version shown in Settings.
   static const String appVersion = '1.0.0';

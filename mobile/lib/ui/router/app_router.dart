@@ -9,16 +9,18 @@ import '../../providers/capsule_provider.dart';
 import '../../providers/payment_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/clipboard_service.dart';
+import '../../services/presented_shares_service.dart';
 import '../../services/system_settings_service.dart';
+import '../screens/gift_received_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/onboarding_screen.dart';
-import '../screens/radar_screen.dart';
 import '../screens/splash_screen.dart';
 import '../widgets/app_snackbar.dart';
+import '../widgets/navigation/spring_page_route.dart';
 
 /// Splash → bootstrap (auth + settings + system config + persisted premium)
-/// → clipboard check → RadarScreen (valid link), OnboardingScreen (fresh new
-/// user), or HomeScreen.
+/// → clipboard check → GiftReceivedScreen (first time only), OnboardingScreen,
+/// or HomeScreen.
 class MainRouter extends StatefulWidget {
   const MainRouter({super.key});
 
@@ -52,8 +54,6 @@ class _MainRouterState extends State<MainRouter> with WidgetsBindingObserver {
   }
 
   Future<void> _bootstrap() async {
-    // Capture providers up front so we never touch `context` across an
-    // async gap below.
     final auth = context.read<AuthProvider>();
     final settings = context.read<SettingsProvider>();
     final payment = context.read<PaymentProvider>();
@@ -61,27 +61,22 @@ class _MainRouterState extends State<MainRouter> with WidgetsBindingObserver {
 
     try {
       await auth.bootstrap();
+      unawaited(settings.loadLocalPrefs());
       final userId = auth.userId;
 
       if (userId != null) {
-        // Resume any background uploads stranded by a previous app kill. Fire-
-        // and-forget so it never blocks app start; it re-drives from the
-        // persisted queue using the now-restored auth session.
         unawaited(capsule.resumePendingUploads());
-
-        // Load per-account settings (onboarding + free drop state). Kept
-        // non-fatal so a transient settings error doesn't block the app.
+        unawaited(capsule.reconcileStuckCapsules(userId));
         try {
           await settings.load(userId);
         } catch (e) {
           if (mounted) AppSnackbar.showError(context, e);
         }
       }
-      // Runtime config + persisted premium are both best-effort.
       await SystemSettingsService.fetch();
       await payment.loadPersistedPremium();
 
-      final link = await ClipboardService.checkClipboardForShareLink();
+      final link = await _firstTimeClipboardLink();
       if (!mounted) return;
       setState(() {
         _pendingLink = link;
@@ -95,8 +90,17 @@ class _MainRouterState extends State<MainRouter> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _checkClipboardInBackground() async {
+  /// Only returns a link the first time this shareId is seen — subsequent
+  /// launches with the same clipboard content go straight to Home.
+  Future<ShareLinkModel?> _firstTimeClipboardLink() async {
     final link = await ClipboardService.checkClipboardForShareLink();
+    if (link == null) return null;
+    if (await PresentedSharesService.hasPresented(link.shareId)) return null;
+    return link;
+  }
+
+  Future<void> _checkClipboardInBackground() async {
+    final link = await _firstTimeClipboardLink();
     if (link == null || !mounted) return;
     setState(() => _pendingLink = link);
   }
@@ -107,10 +111,8 @@ class _MainRouterState extends State<MainRouter> with WidgetsBindingObserver {
 
     final link = _pendingLink;
     if (link != null) {
-      // Recipient: show their drop first. Onboarding (for new users) fires
-      // when they leave the radar/video via `enterAppAfterRecipient`.
-      return RadarScreen(
-        key: ValueKey('radar-${link.shareId}'),
+      return GiftReceivedScreen(
+        key: ValueKey('gift-${link.shareId}'),
         shareId: link.shareId,
         encryptionKey: link.encryptionKey,
         fromName: link.fromName,
@@ -122,24 +124,19 @@ class _MainRouterState extends State<MainRouter> with WidgetsBindingObserver {
   }
 }
 
-/// Called when a recipient closes the map/video of a drop they received.
-/// Stops the GPS stream and enters the main app — routing a brand-new user
-/// through onboarding first (per the "onboarding on close" requirement),
-/// otherwise straight to Home.
+/// Called when a recipient closes the gift/radar/video of a drop they received.
 void enterAppAfterRecipient(BuildContext context) {
   context.read<CapsuleProvider>().stopWatchingPosition();
   final onboardingDone = context.read<SettingsProvider>().onboardingCompleted;
   Navigator.pushAndRemoveUntil(
     context,
-    MaterialPageRoute(
-      builder: (_) => onboardingDone ? const HomeScreen() : const OnboardingScreen(),
+    SpringPageRoute(
+      page: onboardingDone ? const HomeScreen() : const OnboardingScreen(),
     ),
     (route) => false,
   );
 }
 
-/// Convenience for screens that finish the Radar flow and want to stop the
-/// GPS stream without re-triggering the clipboard link.
 void clearPendingRadarLink(BuildContext context) {
   context.read<CapsuleProvider>().stopWatchingPosition();
 }

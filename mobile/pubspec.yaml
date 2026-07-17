@@ -164,18 +164,19 @@ flutter:
 flutter_launcher_icons:
   android: "ic_launcher"
   ios: true
-  image_path_android: "assets/icon/android_icon.jpg"
-  image_path_ios: "assets/icon/ios_icon.jpg"
+  image_path_android: "assets/icon/android_icon.png"
+  image_path_ios: "assets/icon/ios_icon.png"
   remove_alpha_ios: true
 
 # Native splash screen generation — run: dart run flutter_native_splash:create
 flutter_native_splash:
-  color: "#F1E8DF"
-  image: "assets/icon/splash.jpg"
+  # Must match splash PNG edge pixels exactly (avoids 1px cream/white seam)
+  color: "#F1E5D8"
+  # Portrait PNG, slightly zoomed icon, lossless edges
+  image: "assets/icon/splash.png"
   android_12:
-    # Extra padding so the circular Android 12 mask doesn't clip the icon.
-    # The icon occupies the inner 60% of the canvas (safe-zone compliant).
-    image: "assets/icon/splash_android12.jpg"
-    color: "#F1E8DF"
+    # Mild zoom inside circular safe zone
+    image: "assets/icon/splash_android12.png"
+    color: "#F1E5D8"
   android: true
   ios: true

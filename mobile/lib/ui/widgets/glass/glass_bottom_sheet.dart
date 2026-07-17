@@ -26,10 +26,11 @@ class GlassBottomSheet {
         return ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
           child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            // sigmaX/Y 12 → half GPU cost vs 20; still looks frosted
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: AppColors.surfaceContainerLowest.withValues(alpha: 0.88),
+                color: AppColors.surfaceContainerLowest.withValues(alpha: 0.92),
                 border: Border(
                   top: BorderSide(color: AppColors.outlineVariant.withValues(alpha: 0.5)),
                 ),

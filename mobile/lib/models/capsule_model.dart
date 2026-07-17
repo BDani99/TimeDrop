@@ -36,16 +36,25 @@ class CapsuleModel {
 
   /// Returns a copy with the [city] label filled in (used after a lazy
   /// reverse-geocode backfill on the Home screen).
-  CapsuleModel copyWithCity(String city) => CapsuleModel(
+  CapsuleModel copyWithCity(String city) => copyWith(city: city);
+
+  CapsuleModel copyWith({
+    double? latitude,
+    double? longitude,
+    DateTime? unlockTime,
+    String? city,
+    String? status,
+  }) =>
+      CapsuleModel(
         id: id,
         shareId: shareId,
-        latitude: latitude,
-        longitude: longitude,
-        unlockTime: unlockTime,
+        latitude: latitude ?? this.latitude,
+        longitude: longitude ?? this.longitude,
+        unlockTime: unlockTime ?? this.unlockTime,
         createdAt: createdAt,
-        status: status,
+        status: status ?? this.status,
         encryptedPayload: encryptedPayload,
-        city: city,
+        city: city ?? this.city,
       );
 
   factory CapsuleModel.fromJson(Map<String, dynamic> json) {

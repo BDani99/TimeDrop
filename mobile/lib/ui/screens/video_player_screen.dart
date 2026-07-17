@@ -15,6 +15,7 @@ import '../router/app_router.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/loading/skeleton_box.dart';
 import '../widgets/modals/post_open_upsell_sheet.dart';
+import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/primary_button.dart';
 import '../widgets/video/handwritten_note_overlay.dart';
 import '../widgets/video/video_pre_roll.dart';
@@ -167,7 +168,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (!mounted) return;
     if (result == UpsellResult.paywall) {
       await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const PaywallScreen()),
+        SpringPageRoute(page: const PaywallScreen()),
       );
       if (!mounted) return;
     }

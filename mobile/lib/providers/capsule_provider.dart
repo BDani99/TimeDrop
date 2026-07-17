@@ -88,6 +88,13 @@ class CapsuleProvider extends ChangeNotifier {
   }) async {
     isCreating = true;
     notifyListeners();
+
+    // Tracks whether we successfully inserted a 'pending' DB row so we can
+    // clean it up if anything later in this function fails before _runUpload
+    // is scheduled. Without this guard, a failed incrementFreeDropsUsed() or
+    // enqueue() would leave an orphaned 'pending' row stuck forever.
+    String? insertedCapsuleId;
+
     try {
       final keyUrlSafe = await CryptoService.generateKeyUrlSafe();
 
@@ -105,6 +112,7 @@ class CapsuleProvider extends ChangeNotifier {
             unlockTime: unlockTime,
           );
           shareId = candidate;
+          insertedCapsuleId = capsuleId; // row now exists; must clean up on failure
         } on Exception catch (e) {
           attempts++;
           final isUniqueViolation = e.toString().contains('23505');
@@ -118,16 +126,15 @@ class CapsuleProvider extends ChangeNotifier {
         throw const CapsuleException('Could not generate a unique share code. Please try again.');
       }
 
-      await SupabaseService.incrementFreeDropsUsed();
+      // Best-effort; counter drift is acceptable vs. leaving a pending row.
+      try {
+        await SupabaseService.incrementFreeDropsUsed();
+      } catch (e) {
+        debugPrint('Could not increment free drops counter: $e');
+      }
 
       _uploadStates[capsuleId] = CapsuleUploadState.uploading;
 
-      // Persist the job (and durable copies of the media) BEFORE kicking off
-      // the upload, so it can be resumed if the app is killed mid-upload. The
-      // background task reads from the durable copies, not the temp recording.
-      // If the media file is unreachable, `enqueue` throws immediately — we
-      // catch that here, mark the capsule as failed in the DB, and re-throw
-      // so the UI can show the user a meaningful error.
       final UploadJob job;
       try {
         job = await UploadQueueService.enqueue(
@@ -145,7 +152,7 @@ class CapsuleProvider extends ChangeNotifier {
       } catch (e) {
         _uploadStates[capsuleId] = CapsuleUploadState.failed;
         await _safeMarkFailed(capsuleId);
-        // Wrap as CapsuleException so the UI shows a readable message.
+        insertedCapsuleId = null; // cleanup done, don't double-mark in outer catch
         throw CapsuleException(
           'The recording file could not be saved for upload. '
           'Please try recording again.',
@@ -153,37 +160,101 @@ class CapsuleProvider extends ChangeNotifier {
         );
       }
 
-      // Fire-and-forget: the provider is app-scoped, so this outlives the
-      // navigation to ShareScreen / Home.
+      // Upload scheduled — row is now the queue's responsibility.
+      insertedCapsuleId = null;
       unawaited(_runUpload(job, keyUrlSafe));
-
-      // Best-effort reverse-geocode of the drop location for the Home card
-      // title. Non-blocking; Home also backfills any that miss this.
       unawaited(_setSentCityBestEffort(capsuleId, latitude, longitude));
 
       return CapsuleShareInfo(shareId: shareId, encryptionKey: keyUrlSafe);
+    } catch (e) {
+      // Any failure after the DB row was inserted but before _runUpload was
+      // scheduled leaves an orphaned 'pending' row. Mark it failed so the
+      // Home card shows a retry option instead of spinning forever.
+      final id = insertedCapsuleId;
+      if (id != null) {
+        _uploadStates[id] = CapsuleUploadState.failed;
+        await _safeMarkFailed(id);
+      }
+      rethrow;
     } finally {
       isCreating = false;
-      // A new pending capsule now exists — let HomeScreen pick it up.
       _bumpCapsulesChanged();
+    }
+  }
+
+  /// Cross-checks 'pending' capsule DB rows against the local upload queue.
+  /// Any row that is 'pending' but has NO queue entry (orphaned — e.g. from a
+  /// previous code version, a failed enqueue, or a device reinstall) and is
+  /// older than [AppConstants.stuckPendingThreshold] is marked 'failed' so
+  /// the Home card shows a retry prompt instead of spinning forever.
+  ///
+  /// Call once at app start alongside [resumePendingUploads].
+  Future<void> reconcileStuckCapsules(String creatorId) async {
+    try {
+      final pendingInDb = await SupabaseService.fetchPendingCapsules(creatorId);
+      if (pendingInDb.isEmpty) return;
+
+      final queuedIds = (await UploadQueueService.pending())
+          .map((j) => j.capsuleId)
+          .toSet();
+
+      final now = DateTime.now();
+      for (final capsule in pendingInDb) {
+        // Skip capsules that are actively being uploaded right now.
+        if (_uploadStates[capsule.id] == CapsuleUploadState.uploading) continue;
+        // Skip if the queue knows about it — resumePendingUploads() handles it.
+        if (queuedIds.contains(capsule.id)) continue;
+        // Give brand-new capsules a grace period before declaring them stuck.
+        final age = now.difference(capsule.createdAt);
+        if (age < AppConstants.stuckPendingThreshold) continue;
+
+        debugPrint('CapsuleProvider: reconciling orphaned pending capsule ${capsule.id}');
+        _uploadStates[capsule.id] = CapsuleUploadState.failed;
+        await _safeMarkFailed(capsule.id);
+      }
+      _bumpCapsulesChanged();
+    } catch (e) {
+      debugPrint('CapsuleProvider: reconcileStuckCapsules failed: $e');
     }
   }
 
   /// Re-drives every persisted upload job left over from a previous session
   /// (app was killed mid-upload). Call once at app start, after the provider
-  /// and Supabase session exist. Jobs whose media no longer exists (and whose
-  /// key was lost) are marked `failed` so the user sees a retryable state
-  /// rather than an eternal "Uploading…".
+  /// and Supabase session exist.
+  ///
+  /// Jobs are abandoned as `failed` when:
+  /// - The AES key or media file is missing (OS cleaned them up).
+  /// - The job has already been attempted [AppConstants.uploadMaxAttempts] times
+  ///   (prevents an unrecoverable job from retrying forever on every launch).
+  ///
+  /// Jobs that already have a saved [UploadJob.encryptedPayload] skip the
+  /// compress → encrypt → upload phase and retry only the DB write.
   Future<void> resumePendingUploads() async {
     final jobs = await UploadQueueService.pending();
     for (final job in jobs) {
+      // If the payload is already saved we only need network for the DB write,
+      // so the media file check is irrelevant — skip the exhaustion guard only
+      // when upload already succeeded.
+      final payloadReady = job.encryptedPayload != null;
+
+      if (!payloadReady && job.attempts >= AppConstants.uploadMaxAttempts) {
+        debugPrint('UploadQueue: abandoning ${job.capsuleId} after ${job.attempts} attempts');
+        _uploadStates[job.capsuleId] = CapsuleUploadState.failed;
+        await _safeMarkFailed(job.capsuleId);
+        await UploadQueueService.remove(job.capsuleId);
+        continue;
+      }
+
       final key = await UploadQueueService.keyFor(job.capsuleId);
-      final mediaExists = await File(job.mediaPath).exists();
+      final mediaExists = payloadReady || await File(job.mediaPath).exists();
+
       if (key == null || !mediaExists) {
         _uploadStates[job.capsuleId] = CapsuleUploadState.failed;
         await _safeMarkFailed(job.capsuleId);
+        await UploadQueueService.remove(job.capsuleId);
         continue;
       }
+
       _uploadStates[job.capsuleId] = CapsuleUploadState.uploading;
       unawaited(_runUpload(job, key));
     }
@@ -215,49 +286,70 @@ class CapsuleProvider extends ChangeNotifier {
   }
 
   /// Runs (or re-runs) the compress → encrypt → upload → finalize pipeline for
-  /// a persisted [job]. The whole chain is bounded by [AppConstants.uploadTimeout]
-  /// so a stalled network request surfaces as a retryable `failed` state
-  /// instead of hanging on `pending` forever. On success the job (and its
-  /// durable media copies) is removed from the queue.
+  /// a persisted [job].
+  ///
+  /// **Two-phase design** that survives partial failures without re-uploading:
+  ///   1. Compress → encrypt → upload (covered by [AppConstants.uploadTimeout]).
+  ///      On success the payload is saved to the queue manifest immediately,
+  ///      so if the next step fails the retry skips straight to step 2.
+  ///   2. DB row update to 'ready' (separate 30-second timeout).
+  ///      If this fails, the job stays in the queue with the saved payload,
+  ///      and the next launch only retries the cheap DB write.
+  ///
+  /// Every network call is bounded by an explicit timeout so no code path can
+  /// leave the capsule stuck on 'pending' forever.
   Future<void> _runUpload(UploadJob job, String keyUrlSafe) async {
     await UploadQueueService.markAttempt(job.capsuleId);
     try {
-      // Verify the durable media copy exists before starting the heavy pipeline.
-      // If it disappeared (OS cleanup, failed copy), surface a clear error now
-      // rather than an opaque failure deep inside the crypto/upload chain.
-      final mediaFile = File(job.mediaPath);
-      if (!await mediaFile.exists()) {
-        throw StateError(
-          'Media file missing at "${job.mediaPath}". '
-          'The recording was lost before the upload could start.',
-        );
+      final String encryptedPayload;
+
+      if (job.encryptedPayload != null) {
+        // A prior attempt already succeeded at the upload phase — the payload
+        // was persisted to the manifest. Skip straight to the DB write.
+        encryptedPayload = job.encryptedPayload!;
+        debugPrint('UploadQueue: skipping re-upload for ${job.capsuleId} — using saved payload');
+      } else {
+        // Verify the durable media copy exists before starting the heavy pipeline.
+        final mediaFile = File(job.mediaPath);
+        if (!await mediaFile.exists()) {
+          throw StateError(
+            'Media file missing at "${job.mediaPath}". '
+            'The recording was lost before the upload could start.',
+          );
+        }
+
+        encryptedPayload = await () async {
+          final compressedPath = await VideoService.compress(job.mediaPath);
+          return CryptoService.encryptAndUploadCapsule(
+            keyUrlSafe: keyUrlSafe,
+            videoPath: compressedPath,
+            photoPaths: job.photoPaths,
+            videoMimeType: job.mimeType,
+            durationMs: job.durationMs,
+            creatorId: job.creatorId,
+            note: job.note,
+            coverPhotoIndex: job.coverPhotoIndex,
+          );
+        }()
+            .timeout(AppConstants.uploadTimeout);
+
+        // Persist the payload BEFORE attempting the DB write. If the app dies
+        // or the network drops here, the next launch can skip the upload.
+        await UploadQueueService.savePayload(job.capsuleId, encryptedPayload);
       }
 
-      final encryptedPayload = await () async {
-        final compressedPath = await VideoService.compress(job.mediaPath);
-        return CryptoService.encryptAndUploadCapsule(
-          keyUrlSafe: keyUrlSafe,
-          videoPath: compressedPath,
-          photoPaths: job.photoPaths,
-          videoMimeType: job.mimeType,
-          durationMs: job.durationMs,
-          creatorId: job.creatorId,
-          note: job.note,
-          coverPhotoIndex: job.coverPhotoIndex,
-        );
-      }()
-          .timeout(AppConstants.uploadTimeout);
-
+      // DB write has its own timeout — a hung Supabase connection after a
+      // successful upload was the primary cause of capsules stuck on 'pending'.
       await SupabaseService.updateCapsulePayload(
         capsuleId: job.capsuleId,
         encryptedPayload: encryptedPayload,
         status: 'ready',
-      );
+      ).timeout(AppConstants.dbCallTimeout);
+
       _uploadStates[job.capsuleId] = CapsuleUploadState.ready;
       await UploadQueueService.remove(job.capsuleId);
     } catch (e, st) {
       _uploadStates[job.capsuleId] = CapsuleUploadState.failed;
-      // Log the full stack trace so we can diagnose the root cause.
       debugPrint('Capsule background upload failed (${job.capsuleId}): $e\n$st');
       // The job stays in the queue so the user (or the next launch) can retry.
       await _safeMarkFailed(job.capsuleId);
@@ -268,9 +360,11 @@ class CapsuleProvider extends ChangeNotifier {
 
   /// Best-effort flip of a capsule row to `failed` — swallows its own errors
   /// (network down, etc.) so it never throws from a catch/cleanup path.
+  /// Bounded by [AppConstants.dbCallTimeout] so it cannot hang indefinitely.
   Future<void> _safeMarkFailed(String capsuleId) async {
     try {
-      await SupabaseService.updateCapsulePayload(capsuleId: capsuleId, status: 'failed');
+      await SupabaseService.updateCapsulePayload(capsuleId: capsuleId, status: 'failed')
+          .timeout(AppConstants.dbCallTimeout);
     } catch (e) {
       debugPrint('Could not mark capsule $capsuleId failed: $e');
     }

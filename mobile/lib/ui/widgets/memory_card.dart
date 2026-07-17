@@ -7,32 +7,26 @@ import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_typography.dart';
 
 /// A sent-capsule card on the Home screen. Shows the drop location as its
-/// title and a friendly unlock-time subtitle — the raw share code is kept only
-/// for deep-link generation, never displayed. Upload lifecycle is expressed
-/// visually: a thin progress bar along the bottom edge while uploading, and a
-/// discreet red "tap to retry" state on failure. Uses `memoryCardDecoration()`
-/// for the shared ambient-glow look.
+/// title and a sender-facing unlock-time subtitle. Upload lifecycle is
+/// expressed visually: progress while sealing, retry on failure.
 class MemoryCard extends StatelessWidget {
   const MemoryCard({
     super.key,
     required this.unlockTime,
     this.city,
+    this.createdAt,
     this.status = 'ready',
     this.onRetry,
+    this.onTap,
     this.accentColor,
   });
 
-  /// Reverse-geocoded drop location shown as the title; falls back to a
-  /// neutral label while unknown (e.g. still geocoding, or offline).
   final String? city;
   final DateTime unlockTime;
+  final DateTime? createdAt;
   final String status;
-
-  /// Invoked when a `failed` card is tapped. Wired to
-  /// `CapsuleProvider.retryUpload`. Null disables the tap.
   final VoidCallback? onRetry;
-
-  /// Optional adaptive accent from cover/thumbnail palette extraction.
+  final VoidCallback? onTap;
   final Color? accentColor;
 
   static const _months = [
@@ -51,20 +45,25 @@ class MemoryCard extends StatelessWidget {
     if (_isFailed) return 'Upload Failed — Tap to Retry';
     if (_isPending) return 'Sealing your memory…';
     final now = DateTime.now();
-    if (!unlockTime.isAfter(now)) return 'Ready to open';
+    if (!unlockTime.isAfter(now)) return 'Unlockable for them';
     final diff = unlockTime.difference(now);
-    // Far out: an exact countdown is noise — show the sealed-until month.
     if (diff.inDays >= 30) {
       return 'Sealed until ${_months[unlockTime.month - 1]} ${unlockTime.year}';
     }
     if (diff.inDays >= 1) {
-      return 'Unlocks in ${diff.inDays} day${diff.inDays == 1 ? '' : 's'}';
+      return 'Unlocks for them in ${diff.inDays} day${diff.inDays == 1 ? '' : 's'}';
     }
     if (diff.inHours >= 1) {
-      return 'Unlocks in ${diff.inHours} hour${diff.inHours == 1 ? '' : 's'}';
+      return 'Unlocks for them in ${diff.inHours} hour${diff.inHours == 1 ? '' : 's'}';
     }
     final minutes = diff.inMinutes < 1 ? 1 : diff.inMinutes;
-    return 'Unlocks in $minutes minute${minutes == 1 ? '' : 's'}';
+    return 'Unlocks for them in $minutes minute${minutes == 1 ? '' : 's'}';
+  }
+
+  String? get _dateLabel {
+    final dt = createdAt;
+    if (dt == null) return null;
+    return '${_months[dt.month - 1]} ${dt.day}, ${dt.year}';
   }
 
   IconData get _leadingIcon {
@@ -77,6 +76,7 @@ class MemoryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final date = _dateLabel;
     final card = Container(
       width: double.infinity,
       decoration: memoryCardDecoration(tint: _isFailed ? AppColors.error : accentColor),
@@ -116,18 +116,28 @@ class MemoryCard extends StatelessWidget {
                             color: _isFailed ? AppColors.error : AppColors.onSurfaceVariant,
                           ),
                         ),
+                        if (date != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            date,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTypography.labelSm.copyWith(
+                              color: AppColors.onSurfaceVariant.withValues(alpha: 0.85),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
-                  if (_isFailed) ...[
-                    const SizedBox(width: AppSpacing.sm),
-                    Icon(Icons.refresh, size: 18, color: AppColors.error),
-                  ],
+                  if (_isFailed)
+                    const Icon(Icons.refresh, size: 18, color: AppColors.error)
+                  else if (onTap != null)
+                    const Icon(Icons.chevron_right, size: 20, color: AppColors.onSurfaceVariant),
                 ],
               ),
             ),
-            // Thin indeterminate progress bar hugging the bottom edge while the
-            // background upload is in flight (no real byte-progress available).
             if (_isPending)
               const Positioned(
                 left: 0,
@@ -150,6 +160,17 @@ class MemoryCard extends StatelessWidget {
         label: 'Upload failed, tap to retry',
         child: InkWell(
           onTap: onRetry,
+          borderRadius: AppRadii.lgRadius,
+          child: card,
+        ),
+      );
+    }
+    if (onTap != null) {
+      return Semantics(
+        button: true,
+        label: 'Open sent memory details',
+        child: InkWell(
+          onTap: onTap,
           borderRadius: AppRadii.lgRadius,
           child: card,
         ),

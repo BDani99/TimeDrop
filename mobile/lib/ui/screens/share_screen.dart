@@ -32,72 +32,90 @@ class ShareScreen extends StatelessWidget {
       encryptionKey: encryptionKey,
       fromName: fromName,
     );
+    final screenH = MediaQuery.sizeOf(context).height;
+    final orbScale = screenH < 700 ? 0.85 : 1.0;
+
     return Scaffold(
       backgroundColor: AppColors.surface,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.containerMargin),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CrystalShareOrb(shareId: shareId),
-              const SizedBox(height: AppSpacing.lg),
-              Text(
-                'Your capsule is sealed!',
-                style: AppTypography.headlineLg,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                'This memory now exists only for one person.',
-                style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              GlassPanel(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      shareId,
-                      style: AppTypography.headlineMd.copyWith(fontFamily: 'monospace'),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.copy, color: AppColors.primary),
-                      onPressed: () async {
-                        try {
-                          await ClipboardService.copyToClipboard(shareId);
-                          await AppHaptics.medium();
-                          if (context.mounted) {
-                            AppSnackbar.showMessage(context, 'Copied!');
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(AppSpacing.containerMargin),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight - AppSpacing.containerMargin * 2),
+                child: IntrinsicHeight(
+                  child: Column(
+                    children: [
+                      const Spacer(flex: 1),
+                      Transform.scale(
+                        scale: orbScale,
+                        child: CrystalShareOrb(shareId: shareId),
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
+                      Text(
+                        'Your capsule is sealed!',
+                        style: AppTypography.headlineLg,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Text(
+                        'This memory now exists only for one person.',
+                        style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
+                      GlassPanel(
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                shareId,
+                                textAlign: TextAlign.center,
+                                style: AppTypography.headlineMd.copyWith(fontFamily: 'monospace'),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.copy, color: AppColors.primary),
+                              onPressed: () async {
+                                try {
+                                  await ClipboardService.copyToClipboard(shareId);
+                                  await AppHaptics.medium();
+                                  if (context.mounted) {
+                                    AppSnackbar.showMessage(context, 'Copied!');
+                                  }
+                                } catch (e) {
+                                  if (context.mounted) AppSnackbar.showError(context, e);
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
+                      PrimaryButton(
+                        label: 'Send to your loved one',
+                        onPressed: () async {
+                          try {
+                            await ShareService.shareCapsuleLink(url);
+                            await AppHaptics.medium();
+                          } catch (e) {
+                            if (context.mounted) AppSnackbar.showError(context, e);
                           }
-                        } catch (e) {
-                          if (context.mounted) AppSnackbar.showError(context, e);
-                        }
-                      },
-                    ),
-                  ],
+                        },
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      TextButton(
+                        onPressed: () => Navigator.popUntil(context, (route) => route.isFirst),
+                        child: const Text('Return to Dashboard'),
+                      ),
+                      const Spacer(flex: 1),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: AppSpacing.lg),
-              PrimaryButton(
-                label: 'Send to your loved one',
-                onPressed: () async {
-                  try {
-                    await ShareService.shareCapsuleLink(url);
-                    await AppHaptics.medium();
-                  } catch (e) {
-                    if (context.mounted) AppSnackbar.showError(context, e);
-                  }
-                },
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              TextButton(
-                onPressed: () => Navigator.popUntil(context, (route) => route.isFirst),
-                child: const Text('Return to Dashboard'),
-              ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );

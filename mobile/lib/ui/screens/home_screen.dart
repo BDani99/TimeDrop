@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/theme/app_radii.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../models/capsule_model.dart';
@@ -14,17 +16,18 @@ import '../../providers/vault_provider.dart';
 import '../../services/geocoding_service.dart';
 import '../../services/supabase_service.dart';
 import '../widgets/app_snackbar.dart';
+import '../widgets/glass/glass_panel.dart';
 import '../widgets/loading/skeleton_box.dart';
 import '../widgets/memory_card.dart';
 import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/primary_button.dart';
 import 'camera_screen.dart';
+import 'sent_capsule_detail_screen.dart';
 import 'settings_screen.dart';
 import 'vault_screen.dart';
 
-/// Home / dashboard: CTA to start a new capsule + a simple list of the
-/// user's previously-sent capsules (no "vault"/discovery screen — out of
-/// scope for this phase per the spec).
+/// Home: leave-a-memory CTA, inbox summary for received drops, and the
+/// sender's own capsules (active + earlier archive).
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -35,22 +38,66 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   bool _isLoading = true;
   List<CapsuleModel> _capsules = const [];
+  bool _showEarlier = false;
 
   CapsuleProvider? _capsuleProvider;
   int _lastChangeTick = 0;
 
+  final _scrollController = ScrollController();
+  bool _snapping = false;
+
+  static const _maxActiveVisible = 3;
+  static const _headerCollapse =
+      _HomeBrandHeaderDelegate.kMax - _HomeBrandHeaderDelegate.kMin;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _load();
+      _warmHeader();
+    });
+  }
+
+  /// Tiny no-op scroll so the first real drag doesn't pay first-paint cost.
+  Future<void> _warmHeader() async {
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    if (!mounted || !_scrollController.hasClients) return;
+    _scrollController.jumpTo(0.5);
+    _scrollController.jumpTo(0);
+  }
+
+  bool _onScrollEnd(ScrollEndNotification notification) {
+    if (_snapping || !_scrollController.hasClients) return false;
+    // Only snap the collapsing header range — not the whole list.
+    if (notification.depth != 0) return false;
+    final offset = _scrollController.offset;
+    if (offset <= 0 || offset >= _headerCollapse) return false;
+
+    final target = offset < _headerCollapse * 0.42 ? 0.0 : _headerCollapse;
+    _snapping = true;
+    _scrollController
+        .animateTo(
+          target,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        )
+        .whenComplete(() {
+      if (mounted) _snapping = false;
+    });
+    return false;
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _capsuleProvider?.removeListener(_onCapsulesChanged);
+    super.dispose();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Re-fetch the sent list whenever a capsule is reserved or a background
-    // upload reaches a terminal state, so "Uploading…" flips to the real
-    // status without a manual pull-to-refresh.
     final provider = context.read<CapsuleProvider>();
     if (!identical(provider, _capsuleProvider)) {
       _capsuleProvider?.removeListener(_onCapsulesChanged);
@@ -68,19 +115,13 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    _capsuleProvider?.removeListener(_onCapsulesChanged);
-    super.dispose();
-  }
-
-  Future<void> _load() async {
+  Future<void> _load({bool silent = false}) async {
     final userId = context.read<AuthProvider>().userId;
     if (userId == null) return;
-    // Load the Vault (best-effort) so the top-bar badge reflects any
-    // ready-to-open received capsules. App-scoped provider → cheap re-load.
-    unawaited(context.read<VaultProvider>().load(userId));
-    setState(() => _isLoading = true);
+    // Always silent: Home watches VaultProvider — a loading notify would
+    // rebuild this heavy tree under an open Vault (or mid pop animation).
+    unawaited(context.read<VaultProvider>().load(userId, silent: true));
+    if (!silent) setState(() => _isLoading = true);
     try {
       final capsules = await SupabaseService.fetchSentCapsules(userId);
       if (!mounted) return;
@@ -92,13 +133,12 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       AppSnackbar.showError(context, e);
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && _isLoading) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
-  /// Lazily reverse-geocodes any sent capsules still missing a city label and
-  /// persists them (mirrors VaultProvider._backfillCities), so cards show the
-  /// drop location without recomputing on every load.
   Future<void> _backfillCities() async {
     for (var i = 0; i < _capsules.length; i++) {
       final c = _capsules[i];
@@ -108,7 +148,7 @@ class _HomeScreenState extends State<HomeScreen> {
       try {
         await SupabaseService.updateSentCapsuleCity(capsuleId: c.id, city: city);
       } catch (_) {
-        continue; // best-effort; try again next load
+        continue;
       }
       if (!mounted) return;
       final idx = _capsules.indexWhere((x) => x.id == c.id);
@@ -117,91 +157,410 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  List<CapsuleModel> get _active => _capsules
+      .where((c) =>
+          c.status == 'pending' ||
+          c.status == 'failed' ||
+          c.unlockTime.isAfter(DateTime.now()))
+      .toList();
+
+  List<CapsuleModel> get _earlier => _capsules
+      .where((c) =>
+          c.status != 'pending' &&
+          c.status != 'failed' &&
+          !c.unlockTime.isAfter(DateTime.now()))
+      .toList();
+
+  Future<void> _openDetail(CapsuleModel capsule) async {
+    await Navigator.push(
+      context,
+      SpringPageRoute(page: SentCapsuleDetailScreen(capsule: capsule)),
+    );
+    if (mounted) _load();
+  }
+
+  Future<void> _openVault() async {
+    await Navigator.push(
+      context,
+      SpringPageRoute(page: const VaultScreen()),
+    );
+    if (mounted) _load(silent: true);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final hasUnopenedReady = context.watch<VaultProvider>().ready.isNotEmpty;
+    final vault = context.watch<VaultProvider>();
+    final readyCount = vault.ready.length;
+    final waitingCount = vault.waiting.length;
+    final hasInbox = readyCount > 0 || waitingCount > 0;
+    final hasUnopenedReady = readyCount > 0;
+
+    final active = _active;
+    final earlier = _earlier;
+    final visibleActive = active.take(_maxActiveVisible).toList();
+    final overflowActive = active.skip(_maxActiveVisible).toList();
+    final archived = [...overflowActive, ...earlier];
+
     return Scaffold(
       backgroundColor: AppColors.surface,
       body: SafeArea(
-        child: RefreshIndicator(
-          color: AppColors.primary,
-          onRefresh: _load,
-          child: ListView(
-            padding: const EdgeInsets.all(AppSpacing.containerMargin),
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  IconButton(
-                    icon: _VaultIcon(showBadge: hasUnopenedReady),
-                    tooltip: 'Vault',
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const VaultScreen()),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.settings_outlined, color: AppColors.onSurfaceVariant),
-                    tooltip: 'Settings',
-                    onPressed: () => openSettingsScreen(context),
-                  ),
-                ],
+        child: NotificationListener<ScrollEndNotification>(
+          onNotification: _onScrollEnd,
+          child: RefreshIndicator(
+            color: AppColors.primary,
+            onRefresh: _load,
+            child: CustomScrollView(
+              controller: _scrollController,
+              physics: const AlwaysScrollableScrollPhysics(
+                parent: ClampingScrollPhysics(),
               ),
-              Center(
-                child: Column(
-                  children: [
-                    Text('TimeDrop', style: AppTypography.headlineLg),
-                    const SizedBox(height: AppSpacing.xs),
-                    Text(
-                      'Begin a new story.',
-                      style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              Center(
-                child: PrimaryButton(
-                  label: 'Leave a Memory',
-                  onPressed: () => Navigator.push(
-                    context,
-                    SpringPageRoute(page: const CameraScreen()),
+              slivers: [
+                SliverPersistentHeader(
+                  pinned: true,
+                  delegate: _HomeBrandHeaderDelegate(
+                    showVaultBadge: hasUnopenedReady,
+                    onVault: _openVault,
+                    onSettings: () => openSettingsScreen(context),
                   ),
                 ),
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              if (_isLoading)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
-                  child: Column(
-                    children: [
-                      SkeletonMemoryCard(),
-                      SizedBox(height: AppSpacing.sm),
-                      SkeletonMemoryCard(),
-                    ],
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.containerMargin,
+                    AppSpacing.md,
+                    AppSpacing.containerMargin,
+                    AppSpacing.containerMargin,
                   ),
-                )
-              else if (_capsules.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
-                  child: _EmptyState(),
-                )
-              else
-                Column(
-                  children: [
-                    for (final capsule in _capsules) ...[
-                      MemoryCard(
-                        city: capsule.city,
-                        unlockTime: capsule.unlockTime,
-                        status: capsule.status,
-                        onRetry: capsule.status == 'failed'
-                            ? () => context.read<CapsuleProvider>().retryUpload(capsule.id)
-                            : null,
+                  sliver: SliverList(
+                    delegate: SliverChildListDelegate([
+                      Center(
+                        child: PrimaryButton(
+                          label: 'Leave a Memory',
+                          onPressed: () => Navigator.push(
+                            context,
+                            SpringPageRoute(page: const CameraScreen()),
+                          ),
+                        ),
                       ),
-                      const SizedBox(height: AppSpacing.sm),
-                    ],
+                      if (hasInbox) ...[
+                        const SizedBox(height: AppSpacing.md),
+                        _InboxStrip(
+                          readyCount: readyCount,
+                          waitingCount: waitingCount,
+                          onTap: _openVault,
+                        ),
+                      ],
+                      const SizedBox(height: AppSpacing.lg),
+                      if (_isLoading)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                          child: Column(
+                            children: [
+                              SkeletonMemoryCard(),
+                              SizedBox(height: AppSpacing.sm),
+                              SkeletonMemoryCard(),
+                            ],
+                          ),
+                        )
+                      else if (_capsules.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                          child: _EmptyState(),
+                        )
+                      else ...[
+                        Text(
+                          'Memories you left',
+                          textAlign: TextAlign.center,
+                          style: AppTypography.headlineMd,
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                        Text(
+                          'Drops you created and shared.',
+                          textAlign: TextAlign.center,
+                          style: AppTypography.labelSm.copyWith(
+                            color: AppColors.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.md),
+                        for (final capsule in visibleActive) ...[
+                          MemoryCard(
+                            city: capsule.city,
+                            unlockTime: capsule.unlockTime,
+                            createdAt: capsule.createdAt,
+                            status: capsule.status,
+                            onRetry: (capsule.status == 'failed' ||
+                                    capsule.status == 'pending')
+                                ? () => context
+                                    .read<CapsuleProvider>()
+                                    .retryUpload(capsule.id)
+                                : null,
+                            onTap: (capsule.status == 'failed' ||
+                                    capsule.status == 'pending')
+                                ? null
+                                : () => _openDetail(capsule),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                        ],
+                        if (archived.isNotEmpty) ...[
+                          const SizedBox(height: AppSpacing.sm),
+                          Builder(
+                            builder: (context) {
+                              final expanded =
+                                  _showEarlier || visibleActive.isEmpty;
+                              return Column(
+                                children: [
+                                  if (visibleActive.isNotEmpty)
+                                    TextButton(
+                                      onPressed: () => setState(
+                                        () => _showEarlier = !_showEarlier,
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Text(
+                                            expanded
+                                                ? 'Hide earlier drops'
+                                                : 'Earlier drops (${archived.length})',
+                                            style: AppTypography.labelMd
+                                                .copyWith(
+                                              color: AppColors.primary,
+                                            ),
+                                          ),
+                                          Icon(
+                                            expanded
+                                                ? Icons.expand_less
+                                                : Icons.expand_more,
+                                            color: AppColors.primary,
+                                            size: 20,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  if (expanded)
+                                    for (final capsule in archived) ...[
+                                      MemoryCard(
+                                        city: capsule.city,
+                                        unlockTime: capsule.unlockTime,
+                                        createdAt: capsule.createdAt,
+                                        status: capsule.status,
+                                        onRetry: (capsule.status == 'failed' ||
+                                                capsule.status == 'pending')
+                                            ? () => context
+                                                .read<CapsuleProvider>()
+                                                .retryUpload(capsule.id)
+                                            : null,
+                                        onTap: (capsule.status == 'failed' ||
+                                                capsule.status == 'pending')
+                                            ? null
+                                            : () => _openDetail(capsule),
+                                      ),
+                                      const SizedBox(height: AppSpacing.sm),
+                                    ],
+                                ],
+                              );
+                            },
+                          ),
+                        ],
+                      ],
+                    ]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Collapsing header: icons stay pinned; TimeDrop scales into the bar.
+/// Uses Transform.scale (cheap) instead of changing fontSize every frame.
+class _HomeBrandHeaderDelegate extends SliverPersistentHeaderDelegate {
+  _HomeBrandHeaderDelegate({
+    required this.showVaultBadge,
+    required this.onVault,
+    required this.onSettings,
+  });
+
+  final bool showVaultBadge;
+  final VoidCallback onVault;
+  final VoidCallback onSettings;
+
+  static const double kMin = 56;
+  static const double kMax = 118;
+
+  static final _titleStyle = AppTypography.headlineLg.copyWith(
+    fontSize: 32,
+    height: 1.0,
+  );
+  static final _subtitleStyle = AppTypography.bodyMd.copyWith(
+    color: AppColors.onSurfaceVariant,
+    height: 1.2,
+  );
+
+  @override
+  double get minExtent => kMin;
+
+  @override
+  double get maxExtent => kMax;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    final range = kMax - kMin;
+    final t = Curves.easeOutCubic.transform(
+      (shrinkOffset / range).clamp(0.0, 1.0),
+    );
+    final height = (kMax - shrinkOffset).clamp(kMin, kMax);
+
+    final scale = lerpDouble(1.0, 22 / 32, t)!;
+    final titleTop = lerpDouble(46, 12, t)!;
+    final subtitleOpacity = (1.0 - t * 1.8).clamp(0.0, 1.0);
+
+    return RepaintBoundary(
+      child: SizedBox(
+        height: height,
+        child: ColoredBox(
+          color: AppColors.surface,
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              Positioned(
+                top: 0,
+                left: AppSpacing.sm,
+                right: AppSpacing.sm,
+                height: kMin,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton(
+                      icon: _VaultIcon(showBadge: showVaultBadge),
+                      tooltip: 'Vault',
+                      onPressed: onVault,
+                    ),
+                    IconButton(
+                      icon: const Icon(
+                        Icons.settings_outlined,
+                        color: AppColors.onSurfaceVariant,
+                      ),
+                      tooltip: 'Settings',
+                      onPressed: onSettings,
+                    ),
                   ],
                 ),
+              ),
+              Positioned(
+                top: titleTop,
+                left: 64,
+                right: 64,
+                child: Transform.scale(
+                  scale: scale,
+                  alignment: Alignment.topCenter,
+                  filterQuality: FilterQuality.low,
+                  child: Text(
+                    'TimeDrop',
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: _titleStyle,
+                  ),
+                ),
+              ),
+              if (subtitleOpacity > 0.01)
+                Positioned(
+                  top: titleTop + 34 * scale,
+                  left: 24,
+                  right: 24,
+                  child: Opacity(
+                    opacity: subtitleOpacity,
+                    child: Text(
+                      'Begin a new story.',
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      softWrap: false,
+                      style: _subtitleStyle,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _HomeBrandHeaderDelegate oldDelegate) =>
+      oldDelegate.showVaultBadge != showVaultBadge;
+}
+
+class _InboxStrip extends StatelessWidget {
+  const _InboxStrip({
+    required this.readyCount,
+    required this.waitingCount,
+    required this.onTap,
+  });
+
+  final int readyCount;
+  final int waitingCount;
+  final VoidCallback onTap;
+
+  String get _label {
+    final parts = <String>[];
+    if (readyCount > 0) parts.add('$readyCount ready to discover');
+    if (waitingCount > 0) parts.add('$waitingCount waiting');
+    return parts.join(' · ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: AppRadii.lgRadius,
+        child: GlassPanel(
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.inventory_2_outlined,
+                  color: AppColors.primary,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'In your Vault',
+                      style: AppTypography.labelMd.copyWith(
+                        color: AppColors.onSurface,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      _label,
+                      style: AppTypography.labelSm.copyWith(
+                        color: AppColors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: AppColors.onSurfaceVariant),
             ],
           ),
         ),
@@ -210,8 +569,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-/// Vault icon with an optional notification dot, shown when a received capsule
-/// is ready to physically go open (unlock time reached, key held, unviewed).
 class _VaultIcon extends StatelessWidget {
   const _VaultIcon({required this.showBadge});
 
@@ -242,8 +599,6 @@ class _VaultIcon extends StatelessWidget {
   }
 }
 
-/// Gamified empty state: a softly pulsing hourglass anchors the eye above the
-/// prompt, inviting the first capture.
 class _EmptyState extends StatefulWidget {
   const _EmptyState();
 
@@ -251,7 +606,8 @@ class _EmptyState extends StatefulWidget {
   State<_EmptyState> createState() => _EmptyStateState();
 }
 
-class _EmptyStateState extends State<_EmptyState> with SingleTickerProviderStateMixin {
+class _EmptyStateState extends State<_EmptyState>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
 
   @override

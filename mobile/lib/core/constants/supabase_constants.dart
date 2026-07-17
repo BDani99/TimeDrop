@@ -9,6 +9,7 @@ class SupabaseConstants {
   static const String receivedCapsulesTable = 'received_capsules';
   static const String systemSettingsTable = 'system_settings';
   static const String deviceSubscriptionsTable = 'device_subscriptions';
+  static const String feedbackTable = 'feedback';
 
   static const String capsuleMediaBucket = 'capsule-media';
 
@@ -16,6 +17,7 @@ class SupabaseConstants {
   static const String getDeviceSubscriptionRpc = 'get_device_subscription';
   static const String setDeviceSubscriptionRpc = 'set_device_subscription';
   static const String incrementFreeDropsUsedRpc = 'increment_free_drops_used';
+  static const String updateSentCapsuleMetaRpc = 'update_sent_capsule_meta';
 
   static const String mergeAnonymousAccountFunction = 'merge-anonymous-account';
 

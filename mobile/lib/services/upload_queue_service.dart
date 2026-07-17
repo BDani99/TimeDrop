@@ -143,19 +143,34 @@ class UploadQueueService {
     await _writeManifest(jobs);
   }
 
-  /// Removes the job (manifest entry, media copies, and stored key). Called on
-  /// successful upload or when a job is abandoned as permanently failed.
+  /// Saves the already-computed [encryptedPayload] into the manifest so a
+  /// retry after a DB-update failure can skip the expensive
+  /// compress → encrypt → upload pipeline and go straight to the DB write.
+  static Future<void> savePayload(String capsuleId, String encryptedPayload) async {
+    final jobs = await _readManifest();
+    final idx = jobs.indexWhere((j) => j.capsuleId == capsuleId);
+    if (idx == -1) return;
+    jobs[idx] = jobs[idx].copyWith(encryptedPayload: encryptedPayload);
+    await _writeManifest(jobs);
+  }
+
+  /// Removes the job (manifest entry and media copies). The AES key is kept
+  /// in the keystore so the sender can re-share the full link later.
   static Future<void> remove(String capsuleId) async {
     final jobs = await _readManifest()
       ..removeWhere((j) => j.capsuleId == capsuleId);
     await _writeManifest(jobs);
-    await _storage.delete(key: '$_keyPrefix$capsuleId');
     try {
       final dir = Directory('${(await _queueDir()).path}/$capsuleId');
       if (await dir.exists()) await dir.delete(recursive: true);
     } catch (e) {
       debugPrint('UploadQueueService: could not delete media for $capsuleId: $e');
     }
+  }
+
+  /// Permanently drops the stored key (e.g. user deletes the capsule).
+  static Future<void> forgetKey(String capsuleId) async {
+    await _storage.delete(key: '$_keyPrefix$capsuleId');
   }
 }
 
@@ -173,6 +188,7 @@ class UploadJob {
     required this.attempts,
     this.note,
     this.coverPhotoIndex,
+    this.encryptedPayload,
   });
 
   final String capsuleId;
@@ -186,7 +202,12 @@ class UploadJob {
   final int? coverPhotoIndex;
   final int attempts;
 
-  UploadJob copyWith({int? attempts}) => UploadJob(
+  /// If non-null, the compress → encrypt → upload phase already succeeded in
+  /// a prior attempt. A retry can skip straight to the DB-update call, avoiding
+  /// a redundant (and slow) re-upload.
+  final String? encryptedPayload;
+
+  UploadJob copyWith({int? attempts, String? encryptedPayload}) => UploadJob(
         capsuleId: capsuleId,
         shareId: shareId,
         mediaPath: mediaPath,
@@ -197,6 +218,7 @@ class UploadJob {
         note: note,
         coverPhotoIndex: coverPhotoIndex,
         attempts: attempts ?? this.attempts,
+        encryptedPayload: encryptedPayload ?? this.encryptedPayload,
       );
 
   Map<String, dynamic> toJson() => {
@@ -210,6 +232,7 @@ class UploadJob {
         'note': ?note,
         'coverPhotoIndex': ?coverPhotoIndex,
         'attempts': attempts,
+        'encryptedPayload': ?encryptedPayload,
       };
 
   factory UploadJob.fromJson(Map<String, dynamic> json) => UploadJob(
@@ -225,5 +248,6 @@ class UploadJob {
         note: json['note'] as String?,
         coverPhotoIndex: json['coverPhotoIndex'] as int?,
         attempts: json['attempts'] as int? ?? 0,
+        encryptedPayload: json['encryptedPayload'] as String?,
       );
 }

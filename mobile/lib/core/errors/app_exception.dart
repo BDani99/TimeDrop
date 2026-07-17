@@ -34,3 +34,7 @@ class LocationException extends AppException {
 class PaymentException extends AppException {
   const PaymentException(super.message, {super.cause});
 }
+
+class FeedbackException extends AppException {
+  const FeedbackException(super.message, {super.cause});
+}

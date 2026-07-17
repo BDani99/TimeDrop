@@ -3,7 +3,12 @@
     <item>
         <bitmap android:gravity="fill" android:src="@drawable/background"/>
     </item>
-    <item>
-        <bitmap android:gravity="center" android:src="@drawable/splash"/>
+    <!-- Slight overscan (~2%) so any 1px fringe on the splash plate is clipped -->
+    <item
+        android:left="-6dp"
+        android:top="-6dp"
+        android:right="-6dp"
+        android:bottom="-6dp">
+        <bitmap android:gravity="fill" android:src="@drawable/splash"/>
     </item>
 </layer-list>

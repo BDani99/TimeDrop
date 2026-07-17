@@ -48,13 +48,13 @@ class VaultProvider extends ChangeNotifier {
     return receivedCapsules.any((c) => c.unlockTime.isAfter(threshold));
   }
 
-  Future<void> load(String userId) async {
-    isLoading = true;
-    notifyListeners();
+  Future<void> load(String userId, {bool silent = false}) async {
+    if (!silent) {
+      isLoading = true;
+      notifyListeners();
+    }
     try {
       receivedCapsules = await SupabaseService.fetchReceivedCapsules(userId);
-      notifyListeners();
-      // Lazily fill missing city labels (best-effort, non-blocking).
       unawaited(_backfillCities(userId));
     } finally {
       isLoading = false;

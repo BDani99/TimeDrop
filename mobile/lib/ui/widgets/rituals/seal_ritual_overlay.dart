@@ -82,44 +82,56 @@ class _SealRitualOverlayState extends State<SealRitualOverlay>
 
         return Material(
           color: Colors.black.withValues(alpha: darken),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              if (widget.previewImage != null)
-                Transform.scale(
-                  scale: 1.0 - shrink * 0.5,
-                  child: Transform.rotate(
-                    angle: shrink * 0.06,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(24),
-                      child: Image(
-                        image: widget.previewImage!,
-                        width: 220,
-                        height: 280,
-                        fit: BoxFit.cover,
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 260,
+                  height: 260,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      if (widget.previewImage != null)
+                        Transform.scale(
+                          scale: 1.0 - shrink * 0.5,
+                          child: Transform.rotate(
+                            angle: shrink * 0.06,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(24),
+                              child: Image(
+                                image: widget.previewImage!,
+                                width: 180,
+                                height: 220,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                        ),
+                      CustomPaint(
+                        painter: _GoldSweepPainter(progress: goldSweep),
+                        size: const Size(260, 260),
                       ),
-                    ),
+                      CustomPaint(
+                        painter: _LockPainter(progress: lockClose),
+                        size: const Size(80, 80),
+                      ),
+                    ],
                   ),
                 ),
-              CustomPaint(
-                painter: _GoldSweepPainter(progress: goldSweep),
-                size: const Size(260, 260),
-              ),
-              CustomPaint(
-                painter: _LockPainter(progress: lockClose),
-                size: const Size(80, 80),
-              ),
-              if (showText)
+                const SizedBox(height: 28),
                 Opacity(
-                  opacity: ((t - 0.9) / 0.1).clamp(0.0, 1.0),
+                  opacity: showText ? ((t - 0.9) / 0.1).clamp(0.0, 1.0) : 0,
                   child: Text(
                     'Memory sealed.',
+                    textAlign: TextAlign.center,
                     style: AppTypography.headlineLg.copyWith(
                       color: AppColors.ritualGold,
                     ),
                   ),
                 ),
-            ],
+              ],
+            ),
           ),
         );
       },

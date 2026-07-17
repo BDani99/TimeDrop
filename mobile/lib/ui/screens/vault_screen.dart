@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -16,15 +17,16 @@ import '../../providers/vault_provider.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/media_cache_service.dart';
 import '../widgets/app_snackbar.dart';
-import '../widgets/glass/glass_bottom_sheet.dart';
 import '../widgets/loading/skeleton_box.dart';
 import '../widgets/vault/vault_calendar_view.dart';
 import 'memory_detail_screen.dart';
 import '../widgets/countdown_timer.dart';
 import '../widgets/primary_button.dart';
+import 'gift_received_screen.dart';
 import 'paywall_screen.dart';
 import 'radar_screen.dart';
 import 'video_player_screen.dart';
+import '../widgets/navigation/spring_page_route.dart';
 
 enum VaultView { timeline, map, calendar }
 
@@ -41,6 +43,7 @@ class _VaultScreenState extends State<VaultScreen> {
   VaultView _view = VaultView.timeline;
   bool _isReopening = false;
   bool _thumbnailsWarmed = false;
+  bool _started = false;
 
   /// Fully-resolved unlocked-card previews (cover bytes + note text) keyed by
   /// `capsuleId`. Populated by `_warmThumbnails` before the timeline renders
@@ -48,15 +51,22 @@ class _VaultScreenState extends State<VaultScreen> {
   final Map<String, _UnlockedPreview> _previews = {};
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+
+    // If Home already hydrated the vault, paint immediately — don't flash a
+    // skeleton during the route transition (main Home↔Vault micro-lag source).
+    final vault = context.read<VaultProvider>();
+    if (vault.receivedCapsules.isNotEmpty) {
+      _thumbnailsWarmed = true;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
   /// Reads every unlocked card's cover photo + cached note in parallel, then
-  /// `precacheImage`s each cover so the first paint is instant. Nothing on
-  /// the timeline is shown until this completes, killing the flicker where
-  /// cards popped in one after another.
+  /// `precacheImage`s each cover so the first paint is instant.
   Future<void> _warmThumbnails(List<ReceivedCapsuleModel> items) async {
     final results = await Future.wait([
       for (final item in items.where((c) => c.isViewed))
@@ -72,6 +82,7 @@ class _VaultScreenState extends State<VaultScreen> {
           );
         }(),
     ]);
+    if (!mounted) return;
     _previews
       ..clear()
       ..addEntries(results);
@@ -79,13 +90,43 @@ class _VaultScreenState extends State<VaultScreen> {
 
   String? get _userId => context.read<AuthProvider>().userId;
 
+  Future<void> _waitForIncomingTransition() async {
+    final animation = ModalRoute.of(context)?.animation;
+    if (animation == null || animation.isCompleted) return;
+
+    final done = Completer<void>();
+    void listener(AnimationStatus status) {
+      if (status == AnimationStatus.completed ||
+          status == AnimationStatus.dismissed) {
+        animation.removeStatusListener(listener);
+        if (!done.isCompleted) done.complete();
+      }
+    }
+
+    animation.addStatusListener(listener);
+    // Safety if the status never fires (e.g. interrupted).
+    await Future.any([
+      done.future,
+      Future<void>.delayed(const Duration(milliseconds: 400)),
+    ]);
+    animation.removeStatusListener(listener);
+  }
+
   Future<void> _load() async {
     final userId = _userId;
     if (userId == null) return;
-    if (mounted) setState(() => _thumbnailsWarmed = false);
+    final provider = context.read<VaultProvider>();
+    final hadCache = provider.receivedCapsules.isNotEmpty;
+
+    // Only blank the UI when we have nothing to show yet.
+    if (!hadCache && mounted) {
+      setState(() => _thumbnailsWarmed = false);
+    }
+
     try {
-      final provider = context.read<VaultProvider>();
-      await provider.load(userId);
+      await provider.load(userId, silent: hadCache);
+      if (!mounted) return;
+      await _waitForIncomingTransition();
       if (!mounted) return;
       await _warmThumbnails(provider.receivedCapsules);
     } catch (e) {
@@ -105,8 +146,8 @@ class _VaultScreenState extends State<VaultScreen> {
     }
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => RadarScreen(
+      SpringPageRoute(
+        page: RadarScreen(
           shareId: item.shareId,
           encryptionKey: item.encryptionKey!,
           fromName: item.fromName,
@@ -115,11 +156,38 @@ class _VaultScreenState extends State<VaultScreen> {
     );
   }
 
+  /// Waiting drops open the gift intro (countdown only). Ready drops go to Radar.
+  void _openReceived(ReceivedCapsuleModel item) {
+    if (!item.hasKey) {
+      AppSnackbar.showMessage(
+        context,
+        'You need the full link to open this — ask the sender to resend it.',
+      );
+      return;
+    }
+    if (item.isUnlockTimeReached) {
+      _openRadar(item);
+      return;
+    }
+    Navigator.push(
+      context,
+      SpringPageRoute(
+        page: GiftReceivedScreen(
+          shareId: item.shareId,
+          encryptionKey: item.encryptionKey!,
+          fromName: item.fromName,
+        ),
+      ),
+    ).then((_) {
+      if (mounted) _load();
+    });
+  }
+
   void _openDetail(ReceivedCapsuleModel item, {required String actionLabel, required VoidCallback onAction}) {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => MemoryDetailScreen(
+      SpringPageRoute(
+        page: MemoryDetailScreen(
           item: item,
           primaryLabel: actionLabel,
           onPrimaryAction: () {
@@ -139,8 +207,8 @@ class _VaultScreenState extends State<VaultScreen> {
       if (!mounted) return;
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (_) => VideoPlayerScreen(
+        SpringPageRoute(
+          page: VideoPlayerScreen(
             mediaBytes: content.mediaBytes,
             mimeType: content.mimeType,
             note: content.note,
@@ -161,16 +229,14 @@ class _VaultScreenState extends State<VaultScreen> {
   }
 
   Future<void> _showRedeemSheet() async {
-    // Prefill from the clipboard if it holds a TimeDrop link.
-    final clipLink = await ClipboardService.checkClipboardForShareLink();
-    if (!mounted) return;
-    await GlassBottomSheet.show<void>(
+    // Show the sheet immediately — clipboard prefill happens inside initState
+    // of the sheet so the tap response is instant.
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _RedeemSheet(
-        initialText: clipLink?.toUrl() ?? '',
-        onSubmit: _submitCode,
-      ),
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.35),
+      builder: (_) => _RedeemSheet(onSubmit: _submitCode),
     );
   }
 
@@ -183,16 +249,19 @@ class _VaultScreenState extends State<VaultScreen> {
     if (link != null) {
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (_) => RadarScreen(
+        SpringPageRoute(
+          page: GiftReceivedScreen(
             shareId: link.shareId,
             encryptionKey: link.encryptionKey,
             fromName: link.fromName,
           ),
         ),
-      );
+      ).then((_) {
+        if (mounted) _load();
+      });
     } else {
       AppSnackbar.showSuccess(context, 'Added to your vault — waiting to unlock.');
+      await _load();
     }
   }
 
@@ -203,6 +272,13 @@ class _VaultScreenState extends State<VaultScreen> {
       backgroundColor: AppColors.surface,
       appBar: AppBar(
         title: const Text('The Vault'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.vpn_key_outlined),
+            tooltip: 'Redeem a drop',
+            onPressed: _showRedeemSheet,
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(56),
           child: Padding(
@@ -231,12 +307,6 @@ class _VaultScreenState extends State<VaultScreen> {
           ),
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.primary,
-        foregroundColor: AppColors.onPrimary,
-        onPressed: _showRedeemSheet,
-        child: const Icon(Icons.vpn_key_outlined),
-      ),
       body: !_thumbnailsWarmed
           ? const _VaultLoadingSkeleton()
           : IndexedStack(
@@ -247,14 +317,14 @@ class _VaultScreenState extends State<VaultScreen> {
                   vault: vault,
                   isReopening: _isReopening,
                   onRefresh: _load,
-                  onOpenRadar: _openRadar,
+                  onOpenReceived: _openReceived,
                   onReopen: _reopen,
                   onOpenDetail: _openDetail,
                   previews: _previews,
                 ),
                 _MapView(
                   vault: vault,
-                  onOpenRadar: _openRadar,
+                  onOpenReceived: _openReceived,
                   onReopen: _reopen,
                 ),
                 VaultCalendarView(
@@ -262,13 +332,13 @@ class _VaultScreenState extends State<VaultScreen> {
                   onSelect: (ReceivedCapsuleModel item) {
                     if (item.isViewed) {
                       _reopen(item);
-                    } else if (item.hasKey && item.isUnlockTimeReached) {
-                      _openRadar(item);
+                    } else if (item.hasKey) {
+                      _openReceived(item);
                     } else {
                       _openDetail(
                         item,
-                        actionLabel: item.hasKey ? 'Go unlock' : 'Close',
-                        onAction: item.hasKey ? () => _openRadar(item) : () {},
+                        actionLabel: 'Close',
+                        onAction: () {},
                       );
                     }
                   },
@@ -307,7 +377,7 @@ class _TimelineView extends StatelessWidget {
     required this.vault,
     required this.isReopening,
     required this.onRefresh,
-    required this.onOpenRadar,
+    required this.onOpenReceived,
     required this.onReopen,
     required this.onOpenDetail,
     required this.previews,
@@ -316,7 +386,7 @@ class _TimelineView extends StatelessWidget {
   final VaultProvider vault;
   final bool isReopening;
   final Future<void> Function() onRefresh;
-  final void Function(ReceivedCapsuleModel) onOpenRadar;
+  final void Function(ReceivedCapsuleModel) onOpenReceived;
   final void Function(ReceivedCapsuleModel) onReopen;
   final void Function(ReceivedCapsuleModel, {required String actionLabel, required VoidCallback onAction}) onOpenDetail;
   final Map<String, _UnlockedPreview> previews;
@@ -348,11 +418,11 @@ class _TimelineView extends StatelessWidget {
             for (final item in vault.ready) ...[
               _ReadyCard(
                 item: item,
-                onTap: () => onOpenRadar(item),
+                onTap: () => onOpenReceived(item),
                 onLongPress: () => onOpenDetail(
                   item,
                   actionLabel: 'Go unlock',
-                  onAction: () => onOpenRadar(item),
+                  onAction: () => onOpenReceived(item),
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
@@ -364,9 +434,8 @@ class _TimelineView extends StatelessWidget {
             for (final item in vault.waiting) ...[
               _WaitingCard(
                 item: item,
-                // With the full link, tapping reopens the blurred radar so the
-                // recipient can revisit the countdown / map they exited.
-                onTap: item.hasKey ? () => onOpenRadar(item) : null,
+                // Waiting + key → gift intro (countdown). Ready uses radar.
+                onTap: item.hasKey ? () => onOpenReceived(item) : null,
               ),
               const SizedBox(height: AppSpacing.sm),
             ],
@@ -549,7 +618,7 @@ class _FreemiumBanner extends StatelessWidget {
             ),
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const PaywallScreen()),
+              SpringPageRoute(page: const PaywallScreen()),
             ),
             child: const Text('Unlock Lifetime Access'),
           ),
@@ -792,10 +861,10 @@ class _UnlockedCard extends StatelessWidget {
 /// the tile layer so the first paint doesn't flash the raw grey grid while
 /// tiles stream in.
 class _MapView extends StatefulWidget {
-  const _MapView({required this.vault, required this.onOpenRadar, required this.onReopen});
+  const _MapView({required this.vault, required this.onOpenReceived, required this.onReopen});
 
   final VaultProvider vault;
-  final void Function(ReceivedCapsuleModel) onOpenRadar;
+  final void Function(ReceivedCapsuleModel) onOpenReceived;
   final void Function(ReceivedCapsuleModel) onReopen;
 
   @override
@@ -868,7 +937,7 @@ class _MapViewState extends State<_MapView>
                     child: GestureDetector(
                       onTap: () => item.isViewed
                           ? widget.onReopen(item)
-                          : widget.onOpenRadar(item),
+                          : widget.onOpenReceived(item),
                       child: item.isViewed
                           ? _CoverMarker(capsuleId: item.capsuleId)
                           : const _PulsingMarker(),
@@ -966,8 +1035,7 @@ class _PulsingMarkerState extends State<_PulsingMarker> with SingleTickerProvide
 }
 
 class _RedeemSheet extends StatefulWidget {
-  const _RedeemSheet({required this.initialText, required this.onSubmit});
-  final String initialText;
+  const _RedeemSheet({required this.onSubmit});
   final Future<void> Function(String) onSubmit;
 
   @override
@@ -975,8 +1043,25 @@ class _RedeemSheet extends StatefulWidget {
 }
 
 class _RedeemSheetState extends State<_RedeemSheet> {
-  late final TextEditingController _controller = TextEditingController(text: widget.initialText);
+  final TextEditingController _controller = TextEditingController();
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Clipboard prefill runs after the sheet has already opened — instant tap response.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _prefillClipboard());
+  }
+
+  Future<void> _prefillClipboard() async {
+    final clipLink = await ClipboardService.checkClipboardForShareLink();
+    if (!mounted || clipLink == null) return;
+    _controller.text = clipLink.toUrl();
+    _controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: _controller.text.length,
+    );
+  }
 
   @override
   void dispose() {
@@ -998,40 +1083,49 @@ class _RedeemSheetState extends State<_RedeemSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        AppSpacing.md,
-        AppSpacing.md,
-        AppSpacing.md,
-        AppSpacing.md + MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.outlineVariant,
-                borderRadius: BorderRadius.circular(2),
+    // GlassBottomSheet / showModalBottomSheet with isScrollControlled: true
+    // does NOT automatically pad for the keyboard — we must add viewInsets.bottom
+    // ourselves. SafeArea handles the home indicator at the bottom.
+    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.containerMargin,
+          AppSpacing.md,
+          AppSpacing.containerMargin,
+          AppSpacing.md + keyboardHeight,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Handle bar
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.outlineVariant,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: AppSpacing.md),
-          Text('Redeem a Drop', style: AppTypography.headlineMd, textAlign: TextAlign.center),
-          const SizedBox(height: AppSpacing.sm),
-          TextField(
-            controller: _controller,
-            textCapitalization: TextCapitalization.characters,
-            decoration: const InputDecoration(hintText: 'Paste the link or enter the code'),
-            onSubmitted: (_) => _submit(),
-          ),
-          const SizedBox(height: AppSpacing.md),
-          PrimaryButton(label: 'Redeem', isLoading: _busy, onPressed: _submit),
-          const SizedBox(height: AppSpacing.sm),
-        ],
+            const SizedBox(height: AppSpacing.md),
+            Text('Redeem a Drop', style: AppTypography.headlineMd, textAlign: TextAlign.center),
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: _controller,
+              textCapitalization: TextCapitalization.characters,
+              autofocus: true,
+              decoration: const InputDecoration(hintText: 'Paste the link or enter the code'),
+              onSubmitted: (_) => _submit(),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            PrimaryButton(label: 'Redeem', isLoading: _busy, onPressed: _submit),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+        ),
       ),
     );
   }
