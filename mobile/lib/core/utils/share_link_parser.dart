@@ -22,6 +22,20 @@ class ShareLinkModel {
   }
 }
 
+/// A TimeDrop link that names a real capsule but arrived WITHOUT its
+/// decryption key.
+///
+/// This is not a hypothetical. The key lives in the URL fragment so it never
+/// reaches the server, and Android does not reliably deliver the fragment with
+/// an App Link intent. Rather than let such a link vanish silently, the parser
+/// reports it and the UI asks for the full link.
+class IncompleteShareLink {
+  const IncompleteShareLink({required this.shareId, this.fromName});
+
+  final String shareId;
+  final String? fromName;
+}
+
 /// Builds and parses TimeDrop share links. Parsing must work on a plain
 /// clipboard string (not a browser `window.location`), so we go through
 /// `Uri.parse` and read `.fragment` directly — this works fine for a
@@ -34,6 +48,20 @@ class ShareLinkParser {
   /// Returns null if [text] doesn't look like a TimeDrop share link — callers
   /// treat that as "nothing to do", not an error.
   static ShareLinkModel? tryParse(String text) {
+    final complete = _parseParts(text);
+    return complete is ShareLinkModel ? complete : null;
+  }
+
+  /// Like [tryParse], but distinguishes the three outcomes:
+  ///   * [ShareLinkModel]      — a complete, openable link
+  ///   * [IncompleteShareLink] — our link, but the key is missing
+  ///   * `null`                — not a TimeDrop link at all
+  ///
+  /// Deep-link entry points should use this, so a key-less link becomes a
+  /// "paste the full link" prompt instead of being dropped on the floor.
+  static Object? parseParts(String text) => _parseParts(text);
+
+  static Object? _parseParts(String text) {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return null;
 
@@ -51,10 +79,12 @@ class ShareLinkParser {
     if (match == null) return null;
 
     final shareId = match.group(1)!;
-    final key = uri.fragment;
-    if (key.isEmpty) return null;
-
     final fromName = uri.queryParameters['from'];
+    final key = uri.fragment;
+
+    if (key.isEmpty) {
+      return IncompleteShareLink(shareId: shareId, fromName: fromName);
+    }
     return ShareLinkModel(shareId: shareId, encryptionKey: key, fromName: fromName);
   }
 

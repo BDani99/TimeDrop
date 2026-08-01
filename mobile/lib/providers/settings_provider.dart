@@ -20,11 +20,15 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Device-scoped onboarding flag; see [onboardingCompleted].
+  bool _localOnboardingCompleted = false;
+
   /// Loads device-local preferences (not stored in Supabase).
   /// Call once at app start; safe to call multiple times.
   Future<void> loadLocalPrefs() async {
     use24HourTime = await LocalPrefsService.getUse24HourTime();
     mirrorDropPhotos = await LocalPrefsService.getMirrorDropPhotos();
+    _localOnboardingCompleted = await LocalPrefsService.getOnboardingCompleted();
     notifyListeners();
   }
 
@@ -40,9 +44,13 @@ class SettingsProvider extends ChangeNotifier {
     await LocalPrefsService.setMirrorDropPhotos(value);
   }
 
-  bool get freeDropUsed => settings?.freeDropUsed ?? false;
-  int get freeDropsUsed => settings?.freeDropsUsed ?? 0;
-  bool get onboardingCompleted => settings?.onboardingCompleted ?? false;
+  /// True when EITHER store says onboarding is done.
+  ///
+  /// The account flag survives a new device; the device flag survives a
+  /// reinstall (which mints a fresh anonymous account, and so would otherwise
+  /// replay onboarding for the same person every single time).
+  bool get onboardingCompleted =>
+      _localOnboardingCompleted || (settings?.onboardingCompleted ?? false);
   String? get displayName => settings?.displayName;
 
   Future<void> setDisplayName(String userId, String name) async {
@@ -51,16 +59,18 @@ class SettingsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> incrementFreeDropsUsed() async {
-    await SupabaseService.incrementFreeDropsUsed();
-    settings = settings?.copyWith(
-      freeDropUsed: true,
-      freeDropsUsed: freeDropsUsed + 1,
-    );
-    notifyListeners();
-  }
-
+  /// Written to both stores. The device flag goes first and is not allowed to
+  /// fail the call: it is what stops a reinstall replaying the whole flow, and
+  /// it must survive the server write being unavailable.
   Future<void> completeOnboarding(String userId, {Map<String, dynamic>? answers}) async {
+    _localOnboardingCompleted = true;
+    notifyListeners();
+    try {
+      await LocalPrefsService.setOnboardingCompleted(true);
+    } catch (e) {
+      debugPrint('Could not persist the local onboarding flag: $e');
+    }
+
     await SupabaseService.completeOnboarding(userId: userId, answers: answers);
     settings = settings?.copyWith(onboardingCompleted: true, onboardingAnswers: answers);
     notifyListeners();

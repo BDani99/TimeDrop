@@ -11,21 +11,18 @@ import '../../core/haptics/app_haptics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/vault_provider.dart';
 import '../../services/supabase_service.dart';
 import '../router/app_router.dart';
 import '../widgets/app_snackbar.dart';
-import '../widgets/modals/post_open_upsell_sheet.dart';
-import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/primary_button.dart';
 import '../widgets/video/handwritten_note_overlay.dart';
-import '../widgets/video/video_pre_roll.dart';
 import '../widgets/watermark_stamp.dart';
-import 'paywall_screen.dart';
 
 /// Plays the decrypted capsule media once unlocked. Shows the sender's note
 /// as an elegant fading overlay, then — after the video ends — lets the
-/// recipient swipe through any attached photos. "Done" surfaces the
-/// post-open upsell.
+/// recipient swipe through any attached photos. "Done" hands them over to the
+/// Vault.
 class VideoPlayerScreen extends StatefulWidget {
   const VideoPlayerScreen({
     super.key,
@@ -34,7 +31,6 @@ class VideoPlayerScreen extends StatefulWidget {
     this.note,
     this.photos = const [],
     this.capturedAt,
-    this.skipPreRoll = false,
     this.capsuleId,
     this.latitude,
     this.longitude,
@@ -45,7 +41,6 @@ class VideoPlayerScreen extends StatefulWidget {
   final String? note;
   final List<Uint8List> photos;
   final DateTime? capturedAt;
-  final bool skipPreRoll;
   final String? capsuleId;
 
   /// Optional capsule GPS coordinates. When provided (together with
@@ -98,15 +93,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   bool _isReady = false;
   bool _videoEnded = false;
   bool _showNote = true;
-  bool _showPreRoll = false;
-  bool _preRollDone = false;
   bool _markedViewed = false;
 
   @override
   void initState() {
     super.initState();
-    _showPreRoll = !widget.skipPreRoll && widget.capturedAt != null;
-    _preRollDone = widget.skipPreRoll || widget.capturedAt == null;
     // Defer controller init until after the route is fully settled. Creating a
     // VideoPlayer under a fading / snapshotting route leaves the Android
     // texture detached — the UI looks ready but playback never starts.
@@ -159,9 +150,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         _controller = controller;
         _isReady = true;
       });
-      if (_preRollDone) {
-        await _startPlayback();
-      }
+      await _startPlayback();
     } catch (e) {
       if (mounted) AppSnackbar.showError(context, e);
     }
@@ -203,15 +192,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
-  void _onPreRollComplete() {
-    if (!mounted) return;
-    setState(() {
-      _showPreRoll = false;
-      _preRollDone = true;
-    });
-    _startPlayback();
-  }
-
   void _onVideoTick() {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
@@ -229,20 +209,19 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (mounted) setState(() => _videoEnded = false);
   }
 
-  Future<void> _finish() async {
-    final result = await PostOpenUpsellSheet.show(context);
-    if (!mounted) return;
-    if (result == UpsellResult.paywall) {
-      await Navigator.of(context).push(
-        SpringPageRoute(page: const PaywallScreen()),
-      );
-      if (!mounted) return;
-    }
+  /// "Done". Nothing is sold here any more — a paywall thrown up in the second
+  /// after a memory ends spends the best moment of the app on an ask. The
+  /// recipient goes to the Vault instead, where the memory they just watched is
+  /// waiting for them and the offer sits quietly underneath it.
+  void _finish() {
+    // A replay launched from the Vault simply goes back to it; only a memory
+    // opened in the field earns the arrival highlight.
     if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
-    } else {
-      enterAppAfterRecipient(context);
+      return;
     }
+    context.read<VaultProvider>().markJustOpened(widget.capsuleId);
+    enterAppAfterRecipient(context, landOnVault: true);
   }
 
   @override
@@ -280,7 +259,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                             : _VideoStage(
                                 controller: controller,
                                 note: widget.note ?? '',
-                                showNote: _showNote && _preRollDone,
+                                showNote: _showNote,
                                 capturedAt: widget.capturedAt,
                                 latitude: widget.latitude,
                                 longitude: widget.longitude,
@@ -293,13 +272,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                 ),
               ],
             ),
-            if (_showPreRoll && widget.capturedAt != null)
-              Positioned.fill(
-                child: VideoPreRoll(
-                  capturedAt: widget.capturedAt!,
-                  onComplete: _onPreRollComplete,
-                ),
-              ),
           ],
         ),
       ),

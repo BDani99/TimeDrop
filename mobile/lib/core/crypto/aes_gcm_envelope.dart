@@ -93,13 +93,27 @@ class AesGcmEnvelope {
     return base64Url.encode(bytes).replaceAll('=', '');
   }
 
+  /// Expected raw key length. AES-256 means exactly 32 bytes.
+  static const int _keyLength = 32;
+
   static SecretKey keyFromUrlSafeString(String encoded) {
+    final List<int> bytes;
     try {
-      final normalized = base64Url.normalize(encoded);
-      final bytes = base64Url.decode(normalized);
-      return SecretKey(bytes);
+      bytes = base64Url.decode(base64Url.normalize(encoded));
     } catch (e) {
       throw CryptoException('The share link key is malformed.', cause: e);
     }
+
+    // Checked here rather than left to decrypt(): a truncated link produces a
+    // short key, and without this the failure surfaces much later as "the key
+    // or link may be corrupted" — which hides the actual cause (an incomplete
+    // link) from both the user and anyone debugging it.
+    if (bytes.length != _keyLength) {
+      throw CryptoException(
+        'This share link looks incomplete — copy the whole link and try again.',
+        cause: 'Expected a $_keyLength-byte key, got ${bytes.length}.',
+      );
+    }
+    return SecretKey(bytes);
   }
 }

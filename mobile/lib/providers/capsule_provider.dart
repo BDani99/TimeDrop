@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 
 import '../core/config/system_config.dart';
 import '../core/constants/app_constants.dart';
@@ -105,6 +106,10 @@ class CapsuleProvider extends ChangeNotifier {
     // enqueue() would leave an orphaned 'pending' row stuck forever.
     String? insertedCapsuleId;
 
+    // Post-debit balances returned by the reserve RPC, handed back to the
+    // caller so the UI can update without a second round trip.
+    Map<String, dynamic>? lastReserveResult;
+
     try {
       final keyUrlSafe = await CryptoService.generateKeyUrlSafe();
 
@@ -114,19 +119,22 @@ class CapsuleProvider extends ChangeNotifier {
       while (capsuleId == null && attempts < AppConstants.shareIdMaxRetries) {
         final candidate = CryptoService.generateShareId();
         try {
-          capsuleId = await SupabaseService.insertPendingCapsule(
-            creatorId: creatorId,
+          // Inserts the row AND debits a drop in one transaction. A quota
+          // refusal throws DropQuotaException and leaves nothing behind; a
+          // share_id collision rolls the debit back with the row, so the retry
+          // below never costs the user a drop.
+          lastReserveResult = await SupabaseService.createPendingCapsule(
             shareId: candidate,
             latitude: latitude,
             longitude: longitude,
             unlockTime: unlockTime,
           );
+          capsuleId = lastReserveResult['capsule_id'] as String;
           shareId = candidate;
           insertedCapsuleId = capsuleId; // row now exists; must clean up on failure
-        } on Exception catch (e) {
+        } on PostgrestException catch (e) {
           attempts++;
-          final isUniqueViolation = e.toString().contains('23505');
-          if (!isUniqueViolation || attempts >= AppConstants.shareIdMaxRetries) {
+          if (e.code != '23505' || attempts >= AppConstants.shareIdMaxRetries) {
             throw CapsuleException('Could not save your capsule.', cause: e);
           }
         }
@@ -134,13 +142,6 @@ class CapsuleProvider extends ChangeNotifier {
 
       if (capsuleId == null || shareId == null) {
         throw const CapsuleException('Could not generate a unique share code. Please try again.');
-      }
-
-      // Best-effort; counter drift is acceptable vs. leaving a pending row.
-      try {
-        await SupabaseService.incrementFreeDropsUsed();
-      } catch (e) {
-        debugPrint('Could not increment free drops counter: $e');
       }
 
       _uploadStates[capsuleId] = CapsuleUploadState.uploading;
@@ -175,7 +176,11 @@ class CapsuleProvider extends ChangeNotifier {
       unawaited(_runUpload(job, keyUrlSafe));
       unawaited(_setSentCityBestEffort(capsuleId, latitude, longitude));
 
-      return CapsuleShareInfo(shareId: shareId, encryptionKey: keyUrlSafe);
+      return CapsuleShareInfo(
+        shareId: shareId,
+        encryptionKey: keyUrlSafe,
+        balances: lastReserveResult,
+      );
     } catch (e) {
       // Any failure after the DB row was inserted but before _runUpload was
       // scheduled leaves an orphaned 'pending' row. Mark it failed so the
@@ -295,6 +300,23 @@ class CapsuleProvider extends ChangeNotifier {
     unawaited(_runUpload(job, key));
   }
 
+  /// Gives up on a failed upload for good: deletes the reserved capsule row and
+  /// drops the queued job, its durable media copies and its stashed AES key —
+  /// so the share link dies with it and nothing is retried on the next launch.
+  ///
+  /// Returns the post-refund drop balances so the caller can update the UI.
+  ///
+  /// The DB row goes first: if that call fails the local job is left intact, so
+  /// the card still offers a retry instead of becoming unrecoverable.
+  Future<Map<String, dynamic>> discardUpload(String capsuleId) async {
+    final balances = await SupabaseService.discardCapsule(capsuleId);
+    await UploadQueueService.remove(capsuleId);
+    await UploadQueueService.forgetKey(capsuleId);
+    _uploadStates.remove(capsuleId);
+    _bumpCapsulesChanged();
+    return balances;
+  }
+
   /// Runs (or re-runs) the compress → encrypt → upload → finalize pipeline for
   /// a persisted [job].
   ///
@@ -312,11 +334,13 @@ class CapsuleProvider extends ChangeNotifier {
     await UploadQueueService.markAttempt(job.capsuleId);
     try {
       final String encryptedPayload;
+      final List<String> mediaPaths;
 
       if (job.encryptedPayload != null) {
         // A prior attempt already succeeded at the upload phase — the payload
         // was persisted to the manifest. Skip straight to the DB write.
         encryptedPayload = job.encryptedPayload!;
+        mediaPaths = job.mediaPaths ?? const [];
         debugPrint('UploadQueue: skipping re-upload for ${job.capsuleId} — using saved payload');
       } else {
         // Verify the durable media copy exists before starting the heavy pipeline.
@@ -328,7 +352,7 @@ class CapsuleProvider extends ChangeNotifier {
           );
         }
 
-        encryptedPayload = await () async {
+        final result = await () async {
           final compressedPath = await VideoService.compress(job.mediaPath);
           return CryptoService.encryptAndUploadCapsule(
             keyUrlSafe: keyUrlSafe,
@@ -342,10 +366,16 @@ class CapsuleProvider extends ChangeNotifier {
           );
         }()
             .timeout(AppConstants.uploadTimeout);
+        encryptedPayload = result.payload;
+        mediaPaths = result.mediaPaths;
 
         // Persist the payload BEFORE attempting the DB write. If the app dies
         // or the network drops here, the next launch can skip the upload.
-        await UploadQueueService.savePayload(job.capsuleId, encryptedPayload);
+        await UploadQueueService.savePayload(
+          job.capsuleId,
+          encryptedPayload,
+          mediaPaths,
+        );
       }
 
       // DB write has its own timeout — a hung Supabase connection after a
@@ -353,6 +383,7 @@ class CapsuleProvider extends ChangeNotifier {
       await SupabaseService.updateCapsulePayload(
         capsuleId: job.capsuleId,
         encryptedPayload: encryptedPayload,
+        mediaPaths: mediaPaths,
         status: 'ready',
       ).timeout(AppConstants.dbCallTimeout);
 
@@ -620,8 +651,16 @@ class CapsuleProvider extends ChangeNotifier {
 }
 
 class CapsuleShareInfo {
-  const CapsuleShareInfo({required this.shareId, required this.encryptionKey});
+  const CapsuleShareInfo({
+    required this.shareId,
+    required this.encryptionKey,
+    this.balances,
+  });
 
   final String shareId;
   final String encryptionKey;
+
+  /// Post-debit drop balances straight from the reserve RPC, so the caller can
+  /// update [DropBalanceProvider] without re-fetching.
+  final Map<String, dynamic>? balances;
 }

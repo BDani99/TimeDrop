@@ -1,52 +1,63 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
+import 'package:purchases_flutter/purchases_flutter.dart' show Package;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/constants/app_constants.dart';
-import '../../core/env/env.dart';
+import '../../core/constants/revenuecat_constants.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_radii.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
+import '../../providers/drop_balance_provider.dart';
 import '../../providers/payment_provider.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/glass/glass_panel.dart';
+import '../widgets/hidden_reviewer_trigger.dart';
 import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/primary_button.dart';
 import 'home_screen.dart';
 
-/// "Premium" upsell screen. Reached either at the end of onboarding
-/// ([isOnboarding] = true — offers a "continue with your free capsule" skip
-/// and lands on Home) or from the creation free-drop gate ([isOnboarding] =
-/// false — offers a subtler "Maybe later" that pops back). Also hosts the
-/// hidden reviewer-bypass flow (tap the title N times).
+/// Subscription + drop-pack screen. Reached at the end of onboarding
+/// ([isOnboarding] = true — offers a skip and lands on Home) or from the drop
+/// gate, the vault banner and the post-open sheet ([isOnboarding] = false —
+/// offers a subtler "Maybe later" that pops back). Also hosts the hidden
+/// store-reviewer unlock (ten taps on the hero title).
 class PaywallScreen extends StatefulWidget {
-  const PaywallScreen({super.key, this.isOnboarding = false});
+  const PaywallScreen({
+    super.key,
+    this.isOnboarding = false,
+    this.landOnVault = false,
+    this.headline,
+  });
 
   final bool isOnboarding;
+
+  /// Only meaningful together with [isOnboarding]: the user got here right
+  /// after opening a received memory, so the Home screen we install behind us
+  /// should open the Vault. See `enterAppAfterRecipient`.
+  final bool landOnVault;
+
+  /// Optional headline, chosen from the user's onboarding answers so the offer
+  /// reads as a consequence of what they just said rather than a generic pitch.
+  final String? headline;
 
   @override
   State<PaywallScreen> createState() => _PaywallScreenState();
 }
 
 class _PaywallScreenState extends State<PaywallScreen> {
-  int _titleTapCount = 0;
-  bool _showBypassField = false;
   bool _isPurchasing = false;
   bool _isRestoring = false;
-  final _bypassController = TextEditingController();
+
+  /// Identifier of the pack currently being bought, so only that tile spins.
+  String? _purchasingPackId;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadOfferings());
-  }
-
-  @override
-  void dispose() {
-    _bypassController.dispose();
-    super.dispose();
   }
 
   Future<void> _loadOfferings() async {
@@ -57,26 +68,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
     }
   }
 
-  void _onTitleTap() {
-    setState(() {
-      _titleTapCount++;
-      if (_titleTapCount >= AppConstants.reviewerBypassTapCount) {
-        _showBypassField = true;
-      }
-    });
-  }
-
-  Future<void> _submitBypass() async {
-    if (_bypassController.text == Env.reviewerBypassPassword) {
-      await context.read<PaymentProvider>().grantReviewerBypass();
-      if (!mounted) return;
-      AppSnackbar.showSuccess(context, 'Reviewer access granted.');
-      _leaveAfterUnlock();
-    } else {
-      AppSnackbar.showMessage(context, 'Incorrect code.');
-    }
-  }
-
   /// Where to go after the user becomes premium (or restores). In onboarding
   /// we land on a fresh Home; from the creation gate we pop back so they can
   /// finish creating their capsule.
@@ -84,7 +75,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
     if (widget.isOnboarding) {
       Navigator.pushAndRemoveUntil(
         context,
-        SpringPageRoute(page: const HomeScreen()),
+        SpringPageRoute(
+          page: HomeScreen(openVaultOnStart: widget.landOnVault),
+        ),
         (route) => false,
       );
     } else {
@@ -95,15 +88,12 @@ class _PaywallScreenState extends State<PaywallScreen> {
   Future<void> _purchase() async {
     setState(() => _isPurchasing = true);
     try {
-      final paymentProvider = context.read<PaymentProvider>();
-      final packages = paymentProvider.offerings?.current?.availablePackages;
-      final package = (packages != null && packages.isNotEmpty) ? packages.first : null;
-      final success = await paymentProvider.purchase(package);
-      if (!mounted) return;
-      if (success) {
-        AppSnackbar.showSuccess(context, 'Welcome to Premium!');
-        _leaveAfterUnlock();
-      }
+      final payment = context.read<PaymentProvider>();
+      final drops = context.read<DropBalanceProvider>();
+      final bought = await payment.purchaseSubscription(drops);
+      if (!mounted || !bought) return;
+      AppSnackbar.showSuccess(context, 'You\'re subscribed — 10 drops a month.');
+      _leaveAfterUnlock();
     } catch (e) {
       if (mounted) AppSnackbar.showError(context, e);
     } finally {
@@ -111,13 +101,39 @@ class _PaywallScreenState extends State<PaywallScreen> {
     }
   }
 
+  Future<void> _purchasePack(Package package) async {
+    setState(() => _purchasingPackId = package.identifier);
+    try {
+      final payment = context.read<PaymentProvider>();
+      final drops = context.read<DropBalanceProvider>();
+      final before = drops.state.totalRemaining;
+      final bought = await payment.purchasePack(package, drops);
+      if (!mounted || !bought) return;
+
+      // The webhook credits the ledger, so a slow round trip is normal and is
+      // NOT a failure — the money has already changed hands.
+      AppSnackbar.showSuccess(
+        context,
+        drops.state.totalRemaining > before
+            ? 'Drops added.'
+            : 'Purchase complete — your drops will appear in a moment.',
+      );
+      if (!widget.isOnboarding) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) AppSnackbar.showError(context, e);
+    } finally {
+      if (mounted) setState(() => _purchasingPackId = null);
+    }
+  }
+
   Future<void> _restore() async {
     setState(() => _isRestoring = true);
     try {
-      final success = await context.read<PaymentProvider>().restore();
+      final drops = context.read<DropBalanceProvider>();
+      final success = await context.read<PaymentProvider>().restore(drops);
       if (!mounted) return;
       if (success) {
-        AppSnackbar.showSuccess(context, 'Purchases restored.');
+        AppSnackbar.showSuccess(context, 'Subscription restored.');
         _leaveAfterUnlock();
       } else {
         AppSnackbar.showMessage(context, 'No previous purchases found.');
@@ -134,7 +150,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     // so this just enters the app with the free capsule intact.
     Navigator.pushAndRemoveUntil(
       context,
-      SpringPageRoute(page: const HomeScreen()),
+      SpringPageRoute(page: HomeScreen(openVaultOnStart: widget.landOnVault)),
       (route) => false,
     );
   }
@@ -148,16 +164,26 @@ class _PaywallScreenState extends State<PaywallScreen> {
     }
   }
 
+  /// The store's own localised price, falling back to a placeholder only while
+  /// offerings are still loading or the store is unreachable.
+  String _priceFor(SubscriptionPlan plan, PaymentProvider payment) {
+    return payment.packageForPlan(plan)?.storeProduct.priceString ??
+        (plan == SubscriptionPlan.yearly
+            ? AppConstants.yearlyPriceLabel
+            : AppConstants.monthlyPriceLabel);
+  }
+
   @override
   Widget build(BuildContext context) {
     final payment = context.watch<PaymentProvider>();
+    final drops = context.watch<DropBalanceProvider>();
 
     return Scaffold(
       backgroundColor: AppColors.surface,
       body: ListView(
         children: [
           // ── Hero gradient header ────────────────────────────────────────────
-          _PaywallHero(onTitleTap: _onTitleTap),
+          _PaywallHero(headline: widget.headline),
 
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.containerMargin),
@@ -166,31 +192,35 @@ class _PaywallScreenState extends State<PaywallScreen> {
               children: [
                 const SizedBox(height: AppSpacing.md),
 
+                if (drops.isLoaded) ...[
+                  _DropBalanceLine(remaining: drops.state.totalRemaining),
+                  const SizedBox(height: AppSpacing.md),
+                ],
+
                 // ── Features ─────────────────────────────────────────────────
                 const _FeatureRow(
-                  icon: Icons.videocam_outlined,
-                  text: 'Video Memories / month',
-                  value: '${AppConstants.premiumMonthlyVideoLimit}',
+                  icon: Icons.all_inclusive,
+                  text: 'Drops every month',
+                  value: '10',
                 ),
                 const _FeatureRow(
-                  icon: Icons.photo_library_outlined,
-                  text: 'Photo Drops / month',
-                  value: '${AppConstants.premiumMonthlyPhotoLimit}',
-                ),
-                const _FeatureRow(
-                  icon: Icons.lock_outline,
-                  text: 'End-to-End Encrypted',
+                  icon: Icons.bookmark_outline,
+                  text: 'Keep the memories you receive',
                 ),
                 const _FeatureRow(
                   icon: Icons.schedule_outlined,
-                  text: 'Timed Delivery — Your Way',
+                  text: 'Send as far ahead as you like',
+                ),
+                const _FeatureRow(
+                  icon: Icons.lock_outline,
+                  text: 'End-to-end encrypted',
                 ),
                 const SizedBox(height: AppSpacing.lg),
 
                 // ── Plan cards ────────────────────────────────────────────────
                 _PlanCard(
                   title: 'Yearly',
-                  price: AppConstants.yearlyPriceLabel,
+                  price: _priceFor(SubscriptionPlan.yearly, payment),
                   badge: AppConstants.yearlySavingLabel,
                   selected: payment.selectedPlan == SubscriptionPlan.yearly,
                   onTap: () => payment.selectPlan(SubscriptionPlan.yearly),
@@ -198,7 +228,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
                 const SizedBox(height: AppSpacing.sm),
                 _PlanCard(
                   title: 'Monthly',
-                  price: AppConstants.monthlyPriceLabel,
+                  price: _priceFor(SubscriptionPlan.monthly, payment),
                   selected: payment.selectedPlan == SubscriptionPlan.monthly,
                   onTap: () => payment.selectPlan(SubscriptionPlan.monthly),
                 ),
@@ -206,6 +236,30 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
                 // ── CTA ───────────────────────────────────────────────────────
                 PrimaryButton(label: 'Subscribe', isLoading: _isPurchasing, onPressed: _purchase),
+
+                // ── One-off drop packs ────────────────────────────────────────
+                if (payment.packPackages.isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.lg),
+                  Text('Just need a few?', style: AppTypography.headlineMd),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    'One-off drops. They never expire.',
+                    style: AppTypography.labelSm
+                        .copyWith(color: AppColors.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  for (final pack in payment.packPackages) ...[
+                    _PackTile(
+                      count: RevenueCatConstants.dropsForPackage(pack.identifier),
+                      price: pack.storeProduct.priceString,
+                      isBusy: _purchasingPackId == pack.identifier,
+                      onTap: _purchasingPackId == null
+                          ? () => _purchasePack(pack)
+                          : null,
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                  ],
+                ],
                 if (widget.isOnboarding) ...[
                   const SizedBox(height: AppSpacing.sm),
                   OutlinedButton(
@@ -224,17 +278,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   onPressed: _isRestoring ? null : _restore,
                   child: Text(_isRestoring ? 'Restoring…' : 'Restore Purchases'),
                 ),
-
-                if (_showBypassField) ...[
-                  const SizedBox(height: AppSpacing.lg),
-                  TextField(
-                    controller: _bypassController,
-                    obscureText: true,
-                    decoration: const InputDecoration(hintText: 'Reviewer password'),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  PrimaryButton(label: 'Unlock', onPressed: _submitBypass),
-                ],
 
                 const SizedBox(height: AppSpacing.lg),
                 Row(
@@ -263,10 +306,101 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
 /// Full-width gradient hero that anchors the paywall emotionally before the
 /// user reads any feature bullets or pricing.
-class _PaywallHero extends StatelessWidget {
-  const _PaywallHero({required this.onTitleTap});
+/// "You have N drops" line, so the offer is framed against what they hold.
+class _DropBalanceLine extends StatelessWidget {
+  const _DropBalanceLine({required this.remaining});
 
-  final VoidCallback onTitleTap;
+  final int remaining;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = remaining == 0
+        ? 'You have no drops left.'
+        : 'You have $remaining drop${remaining == 1 ? '' : 's'} left.';
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.secondaryContainer,
+        borderRadius: AppRadii.mdRadius,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.confirmation_number_outlined,
+              size: 16, color: AppColors.onSecondaryContainer),
+          const SizedBox(width: AppSpacing.xs),
+          Text(
+            text,
+            style: AppTypography.labelSm
+                .copyWith(color: AppColors.onSecondaryContainer),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A single one-off drop pack.
+class _PackTile extends StatelessWidget {
+  const _PackTile({
+    required this.count,
+    required this.price,
+    required this.isBusy,
+    required this.onTap,
+  });
+
+  final int? count;
+  final String price;
+  final bool isBusy;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = count == null
+        ? 'Drops'
+        : '$count drop${count == 1 ? '' : 's'}';
+    return InkWell(
+      borderRadius: AppRadii.mdRadius,
+      onTap: isBusy ? null : onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceContainerLowest,
+          borderRadius: AppRadii.mdRadius,
+          border: Border.all(color: AppColors.outlineVariant),
+        ),
+        child: Row(
+          children: [
+            Expanded(child: Text(label, style: AppTypography.labelMd)),
+            if (isBusy)
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: AppColors.primary),
+              )
+            else
+              Text(
+                price,
+                style: AppTypography.labelMd.copyWith(color: AppColors.primary),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PaywallHero extends StatelessWidget {
+  const _PaywallHero({this.headline});
+
+  final String? headline;
 
   @override
   Widget build(BuildContext context) {
@@ -305,10 +439,12 @@ class _PaywallHero extends StatelessWidget {
               .animate()
               .scale(begin: const Offset(0.7, 0.7), duration: 500.ms, curve: Curves.easeOutBack),
           const SizedBox(height: AppSpacing.md),
-          GestureDetector(
-            onTap: onTitleTap,
+          // Ten rapid taps here open the store-reviewer passcode sheet. It is
+          // the only entry point, and it looks and behaves like plain text to
+          // everyone else.
+          HiddenReviewerTrigger(
             child: Text(
-              'Seal memories\nfor the ones\nyou love.',
+              headline ?? 'Seal memories\nfor the ones\nyou love.',
               style: AppTypography.headlineLg.copyWith(
                 color: Colors.white,
                 fontSize: 30,

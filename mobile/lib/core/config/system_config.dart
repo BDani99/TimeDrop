@@ -14,14 +14,23 @@ class SystemConfig {
   double radarZoneRadiusMeters = AppConstants.radarZoneRadiusMeters;
   double unlockProximityMeters = AppConstants.unlockProximityMeters;
 
-  /// How many free drops each user gets before the paywall. Server-tunable
-  /// via the `free_drop_limit` system setting.
-  int freeDropLimit = AppConstants.freeDropLimit;
+  /// Below this the recipient's map gives way to the radar. See migration
+  /// 0028 for why it is tunable.
+  double radarSwitchMeters = AppConstants.radarSwitchMeters;
+
+  /// Hysteresis band: once the radar is showing, the map only comes back above
+  /// this. Without the gap, GPS jitter around the threshold would flip the
+  /// whole screen back and forth every few seconds.
+  double get mapReturnMeters => radarSwitchMeters * 1.3;
+
+  // `free_drop_limit` is deliberately NOT mirrored here any more. The drop
+  // allowance is enforced inside `create_pending_capsule`, and a client-side
+  // copy could only ever disagree with the server that actually decides.
 
   void apply({
     double? radarZoneRadiusMeters,
     double? unlockProximityMeters,
-    double? freeDropLimit,
+    double? radarSwitchMeters,
   }) {
     if (radarZoneRadiusMeters != null && radarZoneRadiusMeters > 0) {
       this.radarZoneRadiusMeters = radarZoneRadiusMeters;
@@ -29,8 +38,8 @@ class SystemConfig {
     if (unlockProximityMeters != null && unlockProximityMeters > 0) {
       this.unlockProximityMeters = unlockProximityMeters;
     }
-    if (freeDropLimit != null && freeDropLimit >= 0) {
-      this.freeDropLimit = freeDropLimit.round();
+    if (radarSwitchMeters != null && radarSwitchMeters > 0) {
+      this.radarSwitchMeters = radarSwitchMeters;
     }
   }
 }

@@ -33,6 +33,30 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+
+            <!-- App Links: tapping a share link opens the memory here instead
+                 of the browser. `autoVerify` makes Android fetch
+                 https://time-drop-pink.vercel.app/.well-known/assetlinks.json at
+                 install time; the fingerprint there must be the Play App Signing
+                 one, not the upload keystore's, or verification fails silently
+                 and links fall back to the browser.
+
+                 launchMode is singleTop, so a link tapped while the app is
+                 already running arrives via onNewIntent — app_links handles it.
+
+                 The decryption key travels in the URL fragment (#…), which the
+                 server never sees. Android does not always deliver the fragment
+                 with the intent, so the app has a fallback for a key-less link
+                 rather than failing silently. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data
+                    android:scheme="https"
+                    android:host="time-drop-pink.vercel.app"
+                    android:pathPrefix="/c/"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

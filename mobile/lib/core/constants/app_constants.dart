@@ -25,9 +25,6 @@ class AppConstants {
   static const String shareIdAlphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
   static const int shareIdMaxRetries = 5;
 
-  /// Free tier: one capsule before requiring Premium.
-  static const int freeDropLimit = 1;
-
   /// Background-upload safety timeouts. Without these, a stalled video
   /// compression or a hung network request would leave the capsule row stuck
   /// on `pending` ("Uploading…") forever. On timeout the pipeline surfaces a
@@ -68,16 +65,16 @@ class AppConstants {
   /// Distance under which the radar enters its "closing in" phase.
   static const double radarClosingMeters = 50;
 
-  /// Premium monthly allowances (PaywallScreen copy).
-  static const int premiumMonthlyVideoLimit = 3;
-  static const int premiumMonthlyPhotoLimit = 10;
+  /// Compile-time default for where the recipient's map hands over to the
+  /// radar. Server-tunable via `system_settings.radar_switch_meters` — read it
+  /// through [SystemConfig], not from here.
+  ///
+  /// Deliberately the same as [radarClosingMeters], so the screen changes at
+  /// the same moment the haptic pulse begins.
+  static const double radarSwitchMeters = 50;
 
-  /// Reviewer bypass: tap count on the paywall title before the password
-  /// field appears (App Store / Play reviewer QA path).
-  static const int reviewerBypassTapCount = 10;
-
-  /// Placeholder subscription pricing shown on the Paywall (mock payments —
-  /// real prices come from the store once RevenueCat is configured).
+  /// Shown only until the store's own localised prices arrive. The real
+  /// figures always come from RevenueCat's `storeProduct.priceString`.
   static const String monthlyPriceLabel = '\$4.99 / month';
   static const String yearlyPriceLabel = '\$39.99 / year';
   static const String yearlySavingLabel = 'Save 33%';

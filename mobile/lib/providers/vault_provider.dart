@@ -18,6 +18,23 @@ class VaultProvider extends ChangeNotifier {
   bool isLoading = false;
   List<ReceivedCapsuleModel> receivedCapsules = const [];
 
+  /// Set by the video player when a memory has just been opened in the field,
+  /// read once by the Vault timeline so it can scroll to that card and give it
+  /// a brief arrival animation. Cleared as soon as it has been consumed — the
+  /// highlight is a one-off welcome, not a persistent selection.
+  String? justOpenedCapsuleId;
+
+  void markJustOpened(String? capsuleId) {
+    justOpenedCapsuleId = capsuleId;
+  }
+
+  /// Returns the pending highlight exactly once.
+  String? takeJustOpened() {
+    final id = justOpenedCapsuleId;
+    justOpenedCapsuleId = null;
+    return id;
+  }
+
   /// Ready to physically go unlock: time has passed, not yet viewed, and we
   /// hold the key.
   List<ReceivedCapsuleModel> get ready =>

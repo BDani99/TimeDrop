@@ -1,0 +1,56 @@
+-- Arms the store-reviewer passcode. RUN THIS BY HAND, ONCE, per environment
+-- (Supabase dashboard SQL editor or psql). Do NOT commit a filled-in copy —
+-- `supabase/scripts/set_reviewer_passcode.sql` is gitignored for that reason.
+--
+-- Why it isn't a migration: a migration lives in every clone of the repo
+-- forever. The passcode is a credential you hand to App Store / Play reviewers
+-- in the "App access" notes, and it should be rotatable without a commit.
+--
+-- 1. Replace <PASSCODE> below with the value you put in the review notes.
+-- 2. Run the whole script.
+-- 3. After the app is approved, disable it again (see the bottom of this file).
+
+-- Store only a salted hash. The salt was generated per-deployment by migration
+-- 0021 and is never in version control.
+insert into public.secret_settings (setting_key, setting_value, description)
+values (
+  'reviewer_passcode_sha256',
+  to_jsonb(
+    encode(
+      extensions.digest(
+        'ReviewPassword10_' || (
+          select setting_value #>> '{}'
+            from public.secret_settings
+           where setting_key = 'reviewer_passcode_salt'
+        ),
+        'sha256'
+      ),
+      'hex'
+    )
+  ),
+  'Salted SHA-256 of the store-review passcode. Rotate by re-running this script.'
+)
+on conflict (setting_key) do update
+  set setting_value = excluded.setting_value,
+      updated_at    = now();
+
+-- Turn the feature on.
+update public.secret_settings
+   set setting_value = 'true'::jsonb, updated_at = now()
+ where setting_key = 'reviewer_passcode_enabled';
+
+
+-- ── After approval: switch it off (no app release required) ──────────────────
+-- update public.secret_settings
+--    set setting_value = 'false'::jsonb, updated_at = now()
+--  where setting_key = 'reviewer_passcode_enabled';
+--
+-- ── Revoke a reviewer that was already granted ───────────────────────────────
+-- update public.reviewer_flags
+--    set is_reviewer = false, revoked_at = now()
+--  where user_id = '<uuid>';
+--
+-- ── Inspect attempts (brute force shows up here) ─────────────────────────────
+-- select user_id, succeeded, attempted_at
+--   from public.reviewer_passcode_attempts
+--  order by attempted_at desc limit 50;

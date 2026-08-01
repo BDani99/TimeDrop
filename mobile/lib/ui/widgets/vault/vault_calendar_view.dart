@@ -44,15 +44,23 @@ class _VaultCalendarViewState extends State<VaultCalendarView> {
   }
 
   Map<DateTime, List<ReceivedCapsuleModel>> get _byDay {
+    // `received_capsules` is UNIQUE (user_id, capsule_id) and the fetch is
+    // user-scoped, so a memory can only ever land on one day here.
     final map = <DateTime, List<ReceivedCapsuleModel>>{};
     for (final item in widget.items.where((c) => c.isOpened)) {
       // Group by the day the capsule was *created* (recorded), not when it
       // was unlocked or viewed — this mirrors how a journal works.
-      final raw = item.capsuleCreatedAt ?? item.unlockTime;
-      map.putIfAbsent(_dayKey(raw), () => []).add(item);
+      map.putIfAbsent(_dayKey(_recordedAt(item)), () => []).add(item);
+    }
+    // Chronological within a day so cards don't reshuffle between loads.
+    for (final items in map.values) {
+      items.sort((a, b) => _recordedAt(a).compareTo(_recordedAt(b)));
     }
     return map;
   }
+
+  DateTime _recordedAt(ReceivedCapsuleModel item) =>
+      item.capsuleCreatedAt ?? item.unlockTime;
 
   DateTime _dayKey(DateTime dt) {
     final l = dt.toLocal();
@@ -204,7 +212,13 @@ class _VaultCalendarViewState extends State<VaultCalendarView> {
           ),
           const SizedBox(height: AppSpacing.sm),
           for (final item in selectedItems) ...[
-            _MemoryCard(item: item, onTap: () => widget.onSelect(item)),
+            _MemoryCard(
+              // Keyed so switching days rebuilds the card against the new
+              // memory instead of recycling the previous day's State.
+              key: ValueKey(item.id),
+              item: item,
+              onTap: () => widget.onSelect(item),
+            ),
             const SizedBox(height: AppSpacing.sm),
           ],
         ] else if (_selectedDay != null && selectedItems.isEmpty) ...[
@@ -274,7 +288,7 @@ class _NavButton extends StatelessWidget {
 // ── Memory card (journaling style) ───────────────────────────────────────────
 
 class _MemoryCard extends StatefulWidget {
-  const _MemoryCard({required this.item, required this.onTap});
+  const _MemoryCard({super.key, required this.item, required this.onTap});
 
   final ReceivedCapsuleModel item;
   final VoidCallback onTap;
@@ -284,10 +298,21 @@ class _MemoryCard extends StatefulWidget {
 }
 
 class _MemoryCardState extends State<_MemoryCard> {
-  static const _thumbSize = 80.0;
+  static const _thumbSize = 88.0;
 
-  // Cached once so FutureBuilder doesn't restart on every rebuild.
-  late final Future<_CardData> _dataFuture = _loadData();
+  // Cached so FutureBuilder doesn't restart on every rebuild, but re-issued
+  // whenever this State is recycled for a different memory (see
+  // didUpdateWidget) — otherwise the card keeps painting the old thumbnail
+  // and note.
+  late Future<_CardData> _dataFuture = _loadData();
+
+  @override
+  void didUpdateWidget(_MemoryCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.item.capsuleId != widget.item.capsuleId) {
+      _dataFuture = _loadData();
+    }
+  }
 
   Future<_CardData> _loadData() async {
     final cover = await MediaCacheService.coverPhoto(widget.item.capsuleId);
@@ -328,48 +353,56 @@ class _MemoryCardState extends State<_MemoryCard> {
             future: _dataFuture,
             builder: (context, snap) {
               final data = snap.data ?? const _CardData();
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  // Thumbnail: fixed square
-                  SizedBox(
-                    width: _thumbSize,
-                    height: _thumbSize,
-                    child: _Thumb(bytes: data.cover, width: _thumbSize),
-                  ),
-
-                  // Content
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.all(AppSpacing.sm),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            _title(),
-                            style: AppTypography.labelMd
-                                .copyWith(color: AppColors.onSurface, fontSize: 15),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          if (data.note != null && data.note!.isNotEmpty) ...[
-                            const SizedBox(height: 3),
-                            Text(
-                              data.note!,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: AppTypography.labelSm
-                                  .copyWith(color: AppColors.onSurfaceVariant),
-                            ),
-                          ],
-                          const SizedBox(height: 8),
-                          _Badge(photoCount: data.photoCount),
-                        ],
+              return ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: _thumbSize),
+                child: IntrinsicHeight(
+                  child: Row(
+                    // Thumbnail spans the card's full height so it meets the
+                    // top and bottom edges — a fixed square left white bands
+                    // whenever the text column was taller.
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SizedBox(
+                        width: _thumbSize,
+                        child: _Thumb(bytes: data.cover),
                       ),
-                    ),
+
+                      // Content
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.all(AppSpacing.sm),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _title(),
+                                style: AppTypography.labelMd.copyWith(
+                                    color: AppColors.onSurface, fontSize: 15),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (data.note != null &&
+                                  data.note!.isNotEmpty) ...[
+                                const SizedBox(height: 3),
+                                Text(
+                                  data.note!,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AppTypography.labelSm.copyWith(
+                                      color: AppColors.onSurfaceVariant),
+                                ),
+                              ],
+                              const SizedBox(height: 8),
+                              _Badge(photoCount: data.photoCount),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               );
             },
           ),
@@ -388,31 +421,29 @@ class _CardData {
 
 // ── Thumbnail square ─────────────────────────────────────────────────────────
 
+/// Fills whatever box the parent hands it — the card stretches this to its
+/// own height, so the image never letterboxes inside the frame.
 class _Thumb extends StatelessWidget {
-  const _Thumb({required this.bytes, required this.width});
+  const _Thumb({required this.bytes});
   final Uint8List? bytes;
-  final double width;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: width,
-      height: width,
-      child: bytes != null
-          ? Image.memory(
-              bytes!,
-              fit: BoxFit.cover,
-              gaplessPlayback: true,
-            )
-          : Container(
-              color: AppColors.surfaceContainer,
-              alignment: Alignment.center,
-              child: const Icon(
-                Icons.play_circle_outline,
-                color: AppColors.onSurfaceVariant,
-                size: 28,
-              ),
-            ),
+    if (bytes == null) {
+      return Container(
+        color: AppColors.surfaceContainer,
+        alignment: Alignment.center,
+        child: const Icon(
+          Icons.play_circle_outline,
+          color: AppColors.onSurfaceVariant,
+          size: 28,
+        ),
+      );
+    }
+    return Image.memory(
+      bytes!,
+      fit: BoxFit.cover,
+      gaplessPlayback: true,
     );
   }
 }

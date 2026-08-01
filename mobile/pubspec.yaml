@@ -95,12 +95,17 @@ dependencies:
   # share_id / storage path generation
   uuid: ^4.5.1
 
-  # Open Terms/Privacy links from the Paywall
+  # Open Terms/Privacy links from the Paywall, and hand a drop's coordinates
+  # to the phone's native maps app for turn-by-turn directions
   url_launcher: ^6.3.0
+
+  # Universal Links (iOS) / App Links (Android) — a tapped share link opens
+  # the memory in the app instead of the browser. Replaces the old
+  # clipboard-polling detection.
+  app_links: ^7.2.1
 
   # Premium UX animations & effects
   flutter_animate: ^4.5.2
-  animated_text_kit: ^4.2.3
   palette_generator: ^0.3.3+4
 
 dev_dependencies:

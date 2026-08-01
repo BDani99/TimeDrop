@@ -32,3 +32,8 @@ build/
 # migrations/functions themselves are tracked and pushed via the MCP server)
 supabase/.temp/
 supabase/.branches/
+
+# Operator scripts that hold real credentials. Only the .example templates are
+# tracked — a filled-in copy contains the live store-reviewer passcode.
+supabase/scripts/*.sql
+!supabase/scripts/*.sql.example

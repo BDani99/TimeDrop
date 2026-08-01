@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -8,7 +9,6 @@ import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/config/system_config.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/errors/app_exception.dart';
 import '../../core/errors/error_mapper.dart';
@@ -18,7 +18,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/capsule_provider.dart';
-import '../../providers/payment_provider.dart';
+import '../../providers/drop_balance_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../core/utils/date_format_helper.dart';
 import '../../services/geolocation_service.dart';
@@ -184,13 +184,24 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
     }
   }
 
+  /// Latest date the next drop may open. Free drops are capped by the server;
+  /// capping the picker too means the user picks a valid date instead of being
+  /// rejected after recording. Paid drops reach as far as they like.
+  DateTime get _latestUnlockTime {
+    final cap = context.read<DropBalanceProvider>().state.maxUnlockTime;
+    final absolute = DateTime.now().add(const Duration(days: 3650));
+    return (cap != null && cap.isBefore(absolute)) ? cap : absolute;
+  }
+
   Future<void> _pickUnlockTime() async {
     final now = DateTime.now();
+    final latest = _latestUnlockTime;
+    final initial = now.add(const Duration(days: 1));
     final date = await showDatePicker(
       context: context,
-      initialDate: now.add(const Duration(days: 1)),
+      initialDate: initial.isAfter(latest) ? latest : initial,
       firstDate: now,
-      lastDate: now.add(const Duration(days: 3650)),
+      lastDate: latest,
     );
     if (date == null || !mounted) return;
     final time = await showTimePicker(
@@ -235,15 +246,12 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
       return;
     }
 
-    final settingsProvider = context.read<SettingsProvider>();
-    final paymentProvider = context.read<PaymentProvider>();
-    try {
-      paymentProvider.requireCanCreateCapsule(
-        dropsUsed: settingsProvider.freeDropsUsed,
-        freeDropLimit: SystemConfig.instance.freeDropLimit,
-      );
-    } on PaymentException {
-      if (!mounted) return;
+    // A cheap, optimistic pre-check purely to save the user a recording ritual
+    // they cannot complete. The real gate is `create_pending_capsule`, which
+    // checks and debits in one transaction — so an out-of-date balance here is
+    // harmless, and an unknown one deliberately lets the attempt through.
+    final drops = context.read<DropBalanceProvider>();
+    if (drops.isLoaded && !drops.state.canCreate) {
       Navigator.push(context, SpringPageRoute(page: const PaywallScreen()));
       return;
     }
@@ -296,6 +304,10 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
         creatorId: userId,
       );
       if (!mounted) return;
+      final balances = info.balances;
+      if (balances != null) {
+        context.read<DropBalanceProvider>().applyFromRpc(balances);
+      }
       // Navigate as soon as reserve is done; if the ritual is still playing it
       // will simply be replaced — the user sees a clean transition.
       Navigator.pushReplacement(
@@ -308,6 +320,16 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
           ),
         ),
       );
+    } on DropQuotaException catch (e) {
+      // The server refused on quota grounds. Offering more drops only helps
+      // when running out was the problem — not when a free drop was aimed too
+      // far ahead, where the fix is a nearer date.
+      if (!mounted) return;
+      AppSnackbar.showError(context, e);
+      if (e.canBuyMore) {
+        unawaited(context.read<DropBalanceProvider>().refresh());
+        Navigator.push(context, SpringPageRoute(page: const PaywallScreen()));
+      }
     } catch (e) {
       if (!mounted) return;
       AppSnackbar.showError(context, e);
@@ -441,6 +463,15 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
                 _unlockTime == null ? 'Choose a date & time' : _formatDateTime(_unlockTime!),
               ),
             ),
+            if (context.watch<DropBalanceProvider>().state.isNextDropFree) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Your free drop can open up to two months ahead. '
+                'Get more drops to send further into the future.',
+                style: AppTypography.labelSm
+                    .copyWith(color: AppColors.onSurfaceVariant),
+              ),
+            ],
             const SizedBox(height: AppSpacing.lg),
             Text('Letter to the future', style: AppTypography.headlineMd),
             const SizedBox(height: AppSpacing.sm),

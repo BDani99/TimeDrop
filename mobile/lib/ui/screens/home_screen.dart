@@ -11,17 +11,20 @@ import '../../core/theme/app_typography.dart';
 import '../../models/capsule_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/capsule_provider.dart';
+import '../../providers/drop_balance_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/vault_provider.dart';
 import '../../services/geocoding_service.dart';
 import '../../services/supabase_service.dart';
 import '../widgets/app_snackbar.dart';
+import '../widgets/drop_balance_chip.dart';
 import '../widgets/glass/glass_panel.dart';
 import '../widgets/loading/skeleton_box.dart';
 import '../widgets/memory_card.dart';
 import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/primary_button.dart';
 import 'camera_screen.dart';
+import 'paywall_screen.dart';
 import 'sent_capsule_detail_screen.dart';
 import 'settings_screen.dart';
 import 'vault_screen.dart';
@@ -29,7 +32,13 @@ import 'vault_screen.dart';
 /// Home: leave-a-memory CTA, inbox summary for received drops, and the
 /// sender's own capsules (active + earlier archive).
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.openVaultOnStart = false});
+
+  /// Pushes the Vault immediately after the first frame. Set when the user has
+  /// just finished opening a received memory, so they land on it instead of on
+  /// a Home screen that gives no sign of what just happened. Home stays
+  /// underneath, so Back behaves exactly as it would any other time.
+  final bool openVaultOnStart;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -56,6 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _load();
       _warmHeader();
+      if (widget.openVaultOnStart) _openVault();
     });
   }
 
@@ -171,6 +181,63 @@ class _HomeScreenState extends State<HomeScreen> {
           !c.unlockTime.isAfter(DateTime.now()))
       .toList();
 
+  /// A sent-capsule row. Pending/failed drops aren't openable yet — they offer
+  /// retry instead, and a failed one can also be thrown away outright.
+  Widget _memoryCard(CapsuleModel capsule) {
+    final isInFlight = capsule.status == 'pending' || capsule.status == 'failed';
+    return MemoryCard(
+      city: capsule.city,
+      unlockTime: capsule.unlockTime,
+      createdAt: capsule.createdAt,
+      status: capsule.status,
+      onRetry: isInFlight
+          ? () => context.read<CapsuleProvider>().retryUpload(capsule.id)
+          : null,
+      onDiscard:
+          capsule.status == 'failed' ? () => _confirmDiscard(capsule) : null,
+      onTap: isInFlight ? null : () => _openDetail(capsule),
+    );
+  }
+
+  Future<void> _confirmDiscard(CapsuleModel capsule) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Discard this drop?'),
+        content: const Text(
+          'This memory never finished uploading. Discarding removes it and its '
+          'share link for good — this cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Keep'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Discard'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final balances = await context.read<CapsuleProvider>().discardUpload(capsule.id);
+      if (!mounted) return;
+      final drops = context.read<DropBalanceProvider>();
+      drops.applyFromRpc(balances);
+      AppSnackbar.showSuccess(
+        context,
+        balances['refunded'] == true
+            ? 'Drop discarded — your drop is back.'
+            : 'Drop discarded.',
+      );
+    } catch (e) {
+      if (mounted) AppSnackbar.showError(context, e);
+    }
+  }
+
   Future<void> _openDetail(CapsuleModel capsule) async {
     await Navigator.push(
       context,
@@ -232,6 +299,17 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   sliver: SliverList(
                     delegate: SliverChildListDelegate([
+                      // Directly above the CTA, so the balance is read in the
+                      // same glance as the button that spends it.
+                      Center(
+                        child: DropBalanceChip(
+                          onTap: () => Navigator.push(
+                            context,
+                            SpringPageRoute(page: const PaywallScreen()),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
                       Center(
                         child: PrimaryButton(
                           label: 'Leave a Memory',
@@ -282,22 +360,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(height: AppSpacing.md),
                         for (final capsule in visibleActive) ...[
-                          MemoryCard(
-                            city: capsule.city,
-                            unlockTime: capsule.unlockTime,
-                            createdAt: capsule.createdAt,
-                            status: capsule.status,
-                            onRetry: (capsule.status == 'failed' ||
-                                    capsule.status == 'pending')
-                                ? () => context
-                                    .read<CapsuleProvider>()
-                                    .retryUpload(capsule.id)
-                                : null,
-                            onTap: (capsule.status == 'failed' ||
-                                    capsule.status == 'pending')
-                                ? null
-                                : () => _openDetail(capsule),
-                          ),
+                          _memoryCard(capsule),
                           const SizedBox(height: AppSpacing.sm),
                         ],
                         if (archived.isNotEmpty) ...[
@@ -338,22 +401,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                     ),
                                   if (expanded)
                                     for (final capsule in archived) ...[
-                                      MemoryCard(
-                                        city: capsule.city,
-                                        unlockTime: capsule.unlockTime,
-                                        createdAt: capsule.createdAt,
-                                        status: capsule.status,
-                                        onRetry: (capsule.status == 'failed' ||
-                                                capsule.status == 'pending')
-                                            ? () => context
-                                                .read<CapsuleProvider>()
-                                                .retryUpload(capsule.id)
-                                            : null,
-                                        onTap: (capsule.status == 'failed' ||
-                                                capsule.status == 'pending')
-                                            ? null
-                                            : () => _openDetail(capsule),
-                                      ),
+                                      _memoryCard(capsule),
                                       const SizedBox(height: AppSpacing.sm),
                                     ],
                                 ],

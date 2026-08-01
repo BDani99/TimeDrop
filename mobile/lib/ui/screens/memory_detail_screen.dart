@@ -78,7 +78,7 @@ class MemoryDetailScreen extends StatelessWidget {
       ),
       if (savedForever)
         const MemoryTimelineEvent(
-          title: 'Saved Forever',
+          title: 'Kept',
           subtitle: 'Key backed up to your account',
           icon: Icons.favorite,
         ),

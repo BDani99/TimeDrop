@@ -1,0 +1,19 @@
+# Supabase Edge Function configuration.
+#
+# RevenueCat authenticates with a shared secret in the `Authorization` header,
+# not a Supabase JWT. With the default verify_jwt = true the API gateway would
+# reject every webhook delivery with a 401 before the function ran, and
+# RevenueCat would retry a request that can never succeed.
+#
+# The function itself does the authentication: it compares the header against
+# REVENUECAT_WEBHOOK_SECRET in constant time and returns 401 on a mismatch.
+[functions.revenuecat-webhook]
+verify_jwt = false
+
+# Everything else keeps the default (verify_jwt = true) and derives the caller
+# from their session JWT.
+[functions.merge-anonymous-account]
+verify_jwt = true
+
+[functions.delete-user-account]
+verify_jwt = true

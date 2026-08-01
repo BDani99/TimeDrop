@@ -31,13 +31,12 @@ class Env {
     defaultValue: '',
   );
 
-  /// Local, non-QA override: typing this string in the reviewer-bypass
-  /// password field grants local Premium. Change via --dart-define for
-  /// real App Store / Play Console review submissions.
-  static const String reviewerBypassPassword = String.fromEnvironment(
-    'REVIEWER_BYPASS_PASSWORD',
-    defaultValue: 'timedrop-reviewer',
-  );
+  // NOTE: there is deliberately no reviewer passcode here any more. It used to
+  // be compiled into the binary, where anyone could extract it and it could
+  // only be changed or revoked by shipping a new build. It now lives in the
+  // `secret_settings` table, is compared server-side against a salted hash,
+  // is rate-limited, and has a remote kill switch. See migration 0021 and
+  // supabase/scripts/set_reviewer_passcode.sql.example.
 
   static bool get isRevenueCatConfigured =>
       revenueCatApiKeyIos.isNotEmpty || revenueCatApiKeyAndroid.isNotEmpty;

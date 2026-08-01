@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config/system_config.dart';
 import '../../core/constants/app_constants.dart';
@@ -22,15 +25,27 @@ import '../widgets/loading/skeleton_box.dart';
 import '../widgets/permission_gate.dart';
 import '../widgets/primary_button.dart';
 import '../widgets/radar/sci_fi_radar_view.dart';
+import '../widgets/recipient_map_view.dart';
 import '../widgets/navigation/opaque_page_route.dart';
 import '../router/app_router.dart';
 import 'unlock_sequence_screen.dart';
 
-/// Post-unlock-link screen: waits for the unlock time, then streams GPS
-/// position until the recipient is within `unlockProximityMeters` of the
-/// capsule (or the fuzzy-unlock condition is met), at which point it decrypts
-/// and hands off to [UnlockSequenceScreen]. While the sender's background upload
-/// is still in flight, shows a "materializing" state and polls until ready.
+/// Finding the memory, in two halves.
+///
+/// **Macro** — beyond `radarSwitchMeters`, and while the clock is still
+/// running: a street map showing the drop and the recipient, plus a handoff to
+/// their own maps app. Following a compass needle for four kilometres is not
+/// navigation, and a countdown is more useful next to a map than next to a
+/// radar, because it lets someone plan the trip.
+///
+/// **Micro** — inside the switch distance: the map is useless for the last
+/// few metres (no street map resolves "the bench by the oak"), so the sci-fi
+/// radar takes over with bearing and a quickening haptic pulse.
+///
+/// Once the recipient is within `unlockProximityMeters` (or the fuzzy-unlock
+/// condition is met) it decrypts and hands off to [UnlockSequenceScreen].
+/// While the sender's background upload is still in flight, shows a
+/// "materializing" state and polls until ready.
 class RadarScreen extends StatefulWidget {
   const RadarScreen({
     super.key,
@@ -56,6 +71,51 @@ class _RadarScreenState extends State<RadarScreen> {
   Timer? _pendingPollTimer;
   Timer? _heartbeatTimer;
   int? _heartbeatIntervalMs;
+
+  /// Which half of the search we are in. Held in state rather than derived
+  /// fresh each build so the hysteresis below has something to hold onto.
+  bool _inRadarMode = false;
+
+  /// Flips [_inRadarMode] with a dead band, so GPS jitter around the threshold
+  /// cannot strobe the whole screen between a map and a radar.
+  void _syncMode(double? distance) {
+    if (distance == null) return;
+    final config = SystemConfig.instance;
+    final next = _inRadarMode
+        ? distance <= config.mapReturnMeters
+        : distance <= config.radarSwitchMeters;
+    if (next == _inRadarMode) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _inRadarMode = next);
+    });
+  }
+
+  /// Hands the drop's coordinates to whatever the user navigates with.
+  Future<void> _openDirections(CapsuleModel capsule) async {
+    final lat = capsule.latitude;
+    final lng = capsule.longitude;
+
+    // `geo:` reaches any Android maps app the user has actually chosen;
+    // Apple Maps takes a URL. Both fall back to Google Maps on the web.
+    final candidates = <Uri>[
+      if (Platform.isIOS)
+        Uri.parse('https://maps.apple.com/?daddr=$lat,$lng')
+      else
+        Uri.parse('geo:$lat,$lng?q=$lat,$lng'),
+      Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng'),
+    ];
+
+    for (final uri in candidates) {
+      try {
+        if (await launchUrl(uri, mode: LaunchMode.externalApplication)) return;
+      } catch (_) {
+        // Try the next one.
+      }
+    }
+    if (mounted) {
+      AppSnackbar.showMessage(context, 'No maps app could be opened.');
+    }
+  }
 
   @override
   void dispose() {
@@ -198,6 +258,31 @@ class _RadarScreenState extends State<RadarScreen> {
     );
   }
 
+  /// The macro half: street map + a handoff to the user's own maps app.
+  Widget _macroMap(CapsuleProvider provider, CapsuleModel capsule) {
+    final lat = provider.userLatitude;
+    final lng = provider.userLongitude;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          height: 280,
+          child: RecipientMapView(
+            target: LatLng(capsule.latitude, capsule.longitude),
+            userLocation: (lat != null && lng != null) ? LatLng(lat, lng) : null,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.md),
+        OutlinedButton.icon(
+          onPressed: () => _openDirections(capsule),
+          icon: const Icon(Icons.directions_outlined, size: 18),
+          label: const Text('Get Directions'),
+        ),
+      ],
+    );
+  }
+
   Widget _buildPhase(BuildContext context, CapsuleProvider provider, CapsuleModel capsule) {
     final distance = provider.distanceMeters;
     final proximity = _proximity(distance);
@@ -209,18 +294,23 @@ class _RadarScreenState extends State<RadarScreen> {
         return const _RadarSkeleton();
 
       case RadarPhase.waiting:
+        // GPS runs during the wait too, so the map can show how far they are
+        // and "Get Directions" is useful for planning the trip.
+        if (!_isWatching) {
+          _isWatching = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) => provider.startWatchingPosition());
+        }
         return _RadarLayout(
-          title: 'A memory is waiting nearby.',
+          title: 'A memory is waiting for you.',
+          subtitle: distance != null
+              ? '${DistanceMotivation.formatDistance(distance)} away — it opens in:'
+              : 'It opens in:',
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               CountdownTimer(target: capsule.unlockTime),
               const SizedBox(height: AppSpacing.lg),
-              SciFiRadarView(
-                bearingDegrees: bearing,
-                distanceMeters: distance,
-                proximity: proximity,
-              ),
+              _macroMap(provider, capsule),
             ],
           ),
         );
@@ -231,6 +321,7 @@ class _RadarScreenState extends State<RadarScreen> {
           WidgetsBinding.instance.addPostFrameCallback((_) => provider.startWatchingPosition());
         }
         WidgetsBinding.instance.addPostFrameCallback((_) => _syncHeartbeat(distance));
+        _syncMode(distance);
         // Decrypt in progress after proximity — keep the radar UI but show
         // a clear "opening" state instead of jumping to a stuck spinner.
         if (provider.unlockError != null) {
@@ -257,13 +348,31 @@ class _RadarScreenState extends State<RadarScreen> {
             ),
           );
         }
+        // Macro → micro. The crossfade is deliberately slow enough to read as
+        // a change of mode rather than a glitch, and it lands at the same
+        // moment the haptic pulse starts.
         return _RadarLayout(
-          title: DistanceMotivation.titleFor(distance, isClosing: closing),
-          subtitle: distance != null ? DistanceMotivation.messageFor(distance) : null,
-          child: SciFiRadarView(
-            bearingDegrees: bearing,
-            distanceMeters: distance,
-            proximity: proximity,
+          title: _inRadarMode
+              ? DistanceMotivation.titleFor(distance, isClosing: closing)
+              : 'Head to the spot.',
+          subtitle: distance != null
+              ? DistanceMotivation.messageFor(distance)
+              : 'Finding your position…',
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 600),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            child: _inRadarMode
+                ? SciFiRadarView(
+                    key: const ValueKey('micro-radar'),
+                    bearingDegrees: bearing,
+                    distanceMeters: distance,
+                    proximity: proximity,
+                  )
+                : KeyedSubtree(
+                    key: const ValueKey('macro-map'),
+                    child: _macroMap(provider, capsule),
+                  ),
           ),
         );
 
@@ -339,25 +448,39 @@ class _RadarLayout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(AppSpacing.containerMargin),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(title, style: AppTypography.headlineMd, textAlign: TextAlign.center),
-          if (subtitle != null) ...[
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              subtitle!,
-              style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
-              textAlign: TextAlign.center,
+    // Scrollable, because the macro phase stacks a countdown, a 280 px map and
+    // a button — that overflows a small phone if the column is rigid. The
+    // minHeight keeps everything vertically centred on roomier screens.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(AppSpacing.containerMargin),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: constraints.maxHeight - AppSpacing.containerMargin * 2,
             ),
-          ],
-          const SizedBox(height: AppSpacing.lg),
-          Center(child: child),
-        ],
-      ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(title,
+                    style: AppTypography.headlineMd, textAlign: TextAlign.center),
+                if (subtitle != null) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    subtitle!,
+                    style: AppTypography.bodyMd
+                        .copyWith(color: AppColors.onSurfaceVariant),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+                const SizedBox(height: AppSpacing.lg),
+                Center(child: child),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

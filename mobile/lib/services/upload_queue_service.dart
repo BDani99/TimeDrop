@@ -146,11 +146,22 @@ class UploadQueueService {
   /// Saves the already-computed [encryptedPayload] into the manifest so a
   /// retry after a DB-update failure can skip the expensive
   /// compress → encrypt → upload pipeline and go straight to the DB write.
-  static Future<void> savePayload(String capsuleId, String encryptedPayload) async {
+  ///
+  /// [mediaPaths] rides along because that retry path never re-runs the upload:
+  /// without them the DB write would land with an empty `media_paths`, and the
+  /// server would lose its only handle on those blobs.
+  static Future<void> savePayload(
+    String capsuleId,
+    String encryptedPayload,
+    List<String> mediaPaths,
+  ) async {
     final jobs = await _readManifest();
     final idx = jobs.indexWhere((j) => j.capsuleId == capsuleId);
     if (idx == -1) return;
-    jobs[idx] = jobs[idx].copyWith(encryptedPayload: encryptedPayload);
+    jobs[idx] = jobs[idx].copyWith(
+      encryptedPayload: encryptedPayload,
+      mediaPaths: mediaPaths,
+    );
     await _writeManifest(jobs);
   }
 
@@ -189,6 +200,7 @@ class UploadJob {
     this.note,
     this.coverPhotoIndex,
     this.encryptedPayload,
+    this.mediaPaths,
   });
 
   final String capsuleId;
@@ -207,7 +219,16 @@ class UploadJob {
   /// a redundant (and slow) re-upload.
   final String? encryptedPayload;
 
-  UploadJob copyWith({int? attempts, String? encryptedPayload}) => UploadJob(
+  /// Storage paths of the uploaded blobs, saved alongside [encryptedPayload]
+  /// so the skip-the-upload retry path can still populate `media_paths`.
+  final List<String>? mediaPaths;
+
+  UploadJob copyWith({
+    int? attempts,
+    String? encryptedPayload,
+    List<String>? mediaPaths,
+  }) =>
+      UploadJob(
         capsuleId: capsuleId,
         shareId: shareId,
         mediaPath: mediaPath,
@@ -219,6 +240,7 @@ class UploadJob {
         coverPhotoIndex: coverPhotoIndex,
         attempts: attempts ?? this.attempts,
         encryptedPayload: encryptedPayload ?? this.encryptedPayload,
+        mediaPaths: mediaPaths ?? this.mediaPaths,
       );
 
   Map<String, dynamic> toJson() => {
@@ -233,6 +255,7 @@ class UploadJob {
         'coverPhotoIndex': ?coverPhotoIndex,
         'attempts': attempts,
         'encryptedPayload': ?encryptedPayload,
+        'mediaPaths': ?mediaPaths,
       };
 
   factory UploadJob.fromJson(Map<String, dynamic> json) => UploadJob(
@@ -249,5 +272,6 @@ class UploadJob {
         coverPhotoIndex: json['coverPhotoIndex'] as int?,
         attempts: json['attempts'] as int? ?? 0,
         encryptedPayload: json['encryptedPayload'] as String?,
+        mediaPaths: (json['mediaPaths'] as List?)?.cast<String>(),
       );
 }

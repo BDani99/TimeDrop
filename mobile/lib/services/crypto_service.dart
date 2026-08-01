@@ -12,6 +12,19 @@ import '../core/errors/app_exception.dart';
 import '../models/capsule_metadata.dart';
 import 'storage_service.dart';
 
+/// The result of encrypting and uploading a capsule.
+class EncryptedCapsule {
+  const EncryptedCapsule({required this.payload, required this.mediaPaths});
+
+  /// Base64 metadata envelope for `time_capsules.encrypted_payload`.
+  final String payload;
+
+  /// The same blob paths that are inside [payload], in the clear, for
+  /// `time_capsules.media_paths`. The server cannot decrypt the payload, so
+  /// without these it could never purge a capsule's storage objects.
+  final List<String> mediaPaths;
+}
+
 /// Capsule-level encrypt/decrypt orchestration: ties the pure crypto
 /// primitives in [AesGcmEnvelope] together with [StorageService] and the
 /// metadata JSON shape. Multi-blob design: the video and each photo are
@@ -32,9 +45,14 @@ class CryptoService {
 
   /// Encrypts + uploads the (already compressed) video and each photo as
   /// separate blobs, then returns the base64-encoded metadata envelope to
-  /// store in `time_capsules.encrypted_payload`. Reads one file into memory
-  /// at a time to keep the footprint small.
-  static Future<String> encryptAndUploadCapsule({
+  /// store in `time_capsules.encrypted_payload`, alongside the plain storage
+  /// paths. Reads one file into memory at a time to keep the footprint small.
+  ///
+  /// The paths are returned separately because they are also written to
+  /// `time_capsules.media_paths`: they live inside the encrypted metadata,
+  /// which the server cannot read, so without a plain copy the retention job
+  /// and account deletion could never find these blobs to remove them.
+  static Future<EncryptedCapsule> encryptAndUploadCapsule({
     required String keyUrlSafe,
     required String videoPath,
     required List<String> photoPaths,
@@ -71,7 +89,10 @@ class CryptoService {
     );
     final metadataBytes = Uint8List.fromList(utf8.encode(jsonEncode(metadata.toJson())));
     final metadataEnvelope = await AesGcmEnvelope.encrypt(plaintext: metadataBytes, key: key);
-    return base64Encode(metadataEnvelope);
+    return EncryptedCapsule(
+      payload: base64Encode(metadataEnvelope),
+      mediaPaths: [videoStoragePath, ...photoRefs.map((r) => r.storagePath)],
+    );
   }
 
   static Future<String> _encryptAndUpload(Uint8List bytes, SecretKey key, String creatorId) async {

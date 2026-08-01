@@ -18,6 +18,7 @@ import '../../services/clipboard_service.dart';
 import '../../services/media_cache_service.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/loading/skeleton_box.dart';
+import '../widgets/vault/new_memory_highlight.dart';
 import '../widgets/vault/vault_calendar_view.dart';
 import 'memory_detail_screen.dart';
 import '../widgets/countdown_timer.dart';
@@ -46,6 +47,12 @@ class _VaultScreenState extends State<VaultScreen> {
   bool _thumbnailsWarmed = false;
   bool _started = false;
 
+  /// The memory the user opened moments ago, if they came straight from the
+  /// field. Claimed once from the provider and kept for this visit only, so
+  /// leaving and returning to the Vault does not replay the welcome.
+  String? _highlightCapsuleId;
+  final GlobalKey _highlightKey = GlobalKey();
+
   /// Fully-resolved unlocked-card previews (cover bytes + note text) keyed by
   /// `capsuleId`. Populated by `_warmThumbnails` before the timeline renders
   /// so cards paint fully-populated instead of streaming in one-by-one.
@@ -62,6 +69,9 @@ class _VaultScreenState extends State<VaultScreen> {
     // thumbnails are warmed. If nothing is unlocked yet there's nothing to
     // warm, so skip the skeleton immediately.
     final vault = context.read<VaultProvider>();
+    // Claimed here rather than in build(): build runs many times, and the
+    // welcome is owed exactly once.
+    _highlightCapsuleId = vault.takeJustOpened();
     final hasUnlocked = vault.receivedCapsules.any((c) => c.isOpened);
     if (_previews.isNotEmpty || !hasUnlocked) {
       _thumbnailsWarmed = true;
@@ -140,7 +150,24 @@ class _VaultScreenState extends State<VaultScreen> {
       if (mounted) AppSnackbar.showError(context, e);
     } finally {
       if (mounted) setState(() => _thumbnailsWarmed = true);
+      _scrollToHighlight();
     }
+  }
+
+  /// Brings the just-opened memory into view. It sits under "Opened", which on
+  /// a full vault can be well below the fold.
+  void _scrollToHighlight() {
+    if (_highlightCapsuleId == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = _highlightKey.currentContext;
+      if (!mounted || target == null) return;
+      Scrollable.ensureVisible(
+        target,
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOutCubic,
+        alignment: 0.25,
+      );
+    });
   }
 
   void _openRadar(ReceivedCapsuleModel item) {
@@ -220,7 +247,6 @@ class _VaultScreenState extends State<VaultScreen> {
             mimeType: content.mimeType,
             note: content.note,
             photos: content.photos,
-            skipPreRoll: true,
             capsuleId: item.capsuleId,
             capturedAt: item.capsuleCreatedAt ?? item.unlockTime,
             latitude: item.latitude,
@@ -284,15 +310,18 @@ class _VaultScreenState extends State<VaultScreen> {
     final vault = context.watch<VaultProvider>();
     return Scaffold(
       backgroundColor: AppColors.surface,
+      // The primary way in is now a tapped share link, so redeeming by hand is
+      // the fallback for a link that did not open the app — a corner icon was
+      // too easy to miss when that happens.
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _showRedeemSheet,
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.vpn_key_outlined),
+        label: const Text('Redeem a Drop'),
+      ),
       appBar: AppBar(
         title: const Text('The Vault'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.vpn_key_outlined),
-            tooltip: 'Redeem a drop',
-            onPressed: _showRedeemSheet,
-          ),
-        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(56),
           child: Padding(
@@ -335,6 +364,8 @@ class _VaultScreenState extends State<VaultScreen> {
                   onReopen: _reopen,
                   onOpenDetail: _openDetail,
                   previews: _previews,
+                  highlightCapsuleId: _highlightCapsuleId,
+                  highlightKey: _highlightKey,
                 ),
                 _MapView(
                   vault: vault,
@@ -395,6 +426,8 @@ class _TimelineView extends StatelessWidget {
     required this.onReopen,
     required this.onOpenDetail,
     required this.previews,
+    required this.highlightCapsuleId,
+    required this.highlightKey,
   });
 
   final VaultProvider vault;
@@ -405,11 +438,24 @@ class _TimelineView extends StatelessWidget {
   final void Function(ReceivedCapsuleModel, {required String actionLabel, required VoidCallback onAction}) onOpenDetail;
   final Map<String, _UnlockedPreview> previews;
 
+  /// The memory just opened in the field, if any — scrolled to and briefly
+  /// highlighted, with the upsell moved directly beneath it.
+  final String? highlightCapsuleId;
+  final GlobalKey highlightKey;
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    final isPremium = context.watch<PaymentProvider>().isPremium;
+    final isPremium = context.watch<PaymentProvider>().isSubscribed;
     final showHighStakes = !auth.isLinked && vault.hasHighStakesCapsule;
+
+    // The inline card only exists when there is a fresh memory to attach it
+    // to. When it is showing, the banner at the bottom stands down — two asks
+    // on one screen is one ask too many.
+    final highlighted = highlightCapsuleId;
+    final showInlineUpsell = !isPremium &&
+        highlighted != null &&
+        vault.opened.any((c) => c.capsuleId == highlighted);
 
     return RefreshIndicator(
       color: AppColors.primary,
@@ -461,19 +507,30 @@ class _TimelineView extends StatelessWidget {
             _SectionLabel('Opened'),
             for (final item in vault.opened) ...[
               RepaintBoundary(
-                child: _UnlockedCard(
-                  item: item,
-                  preview: previews[item.capsuleId] ?? const _UnlockedPreview(),
-                  isBusy: reopeningCapsuleId == item.capsuleId,
-                  onTap: () => onReopen(item),
-                  onLongPress: () => onOpenDetail(
-                    item,
-                    actionLabel: 'Replay',
-                    onAction: () => onReopen(item),
+                child: KeyedSubtree(
+                  key: item.capsuleId == highlighted ? highlightKey : null,
+                  child: NewMemoryHighlight(
+                    active: item.capsuleId == highlighted,
+                    child: _UnlockedCard(
+                      item: item,
+                      preview:
+                          previews[item.capsuleId] ?? const _UnlockedPreview(),
+                      isBusy: reopeningCapsuleId == item.capsuleId,
+                      onTap: () => onReopen(item),
+                      onLongPress: () => onOpenDetail(
+                        item,
+                        actionLabel: 'Replay',
+                        onAction: () => onReopen(item),
+                      ),
+                    ),
                   ),
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
+              if (showInlineUpsell && item.capsuleId == highlighted) ...[
+                const _KeepSafeCard(),
+                const SizedBox(height: AppSpacing.sm),
+              ],
             ],
           ],
           if (!vault.isLoading &&
@@ -488,7 +545,7 @@ class _TimelineView extends StatelessWidget {
                 style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
               ),
             ),
-          if (!isPremium) ...[
+          if (!isPremium && !showInlineUpsell) ...[
             const SizedBox(height: AppSpacing.md),
             const _FreemiumBanner(),
           ],
@@ -595,6 +652,53 @@ class _HighStakesBanner extends StatelessWidget {
                 ),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The upsell that used to interrupt the recipient the moment their memory
+/// finished playing. It now waits here, under the memory it is talking about,
+/// where the offer has a subject instead of being an obstacle.
+class _KeepSafeCard extends StatelessWidget {
+  const _KeepSafeCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppColors.primaryContainer, AppColors.primary],
+        ),
+        borderRadius: AppRadii.lgRadius,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Keep this memory safe.',
+            style: AppTypography.headlineMd.copyWith(color: Colors.white),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'Link your account and join TimeDrop Pro.',
+            style: AppTypography.bodyMd.copyWith(color: Colors.white70),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: const BorderSide(color: Colors.white70),
+            ),
+            onPressed: () => Navigator.push(
+              context,
+              SpringPageRoute(page: const PaywallScreen()),
+            ),
+            child: const Text('See the plans'),
           ),
         ],
       ),

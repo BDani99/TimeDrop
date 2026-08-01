@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/errors/app_exception.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/utils/share_link_parser.dart';
 import '../../models/capsule_model.dart';
 import '../../providers/auth_provider.dart';
-import '../../services/presented_shares_service.dart';
 import '../../services/supabase_service.dart';
 import '../router/app_router.dart';
 import 'home_screen.dart';
@@ -20,8 +19,12 @@ import '../widgets/primary_button.dart';
 import 'radar_screen.dart';
 
 /// First-touch receive experience: emotional intro + countdown (or Open now).
-/// No map, radar, or media. Marks the shareId as presented so clipboard
-/// auto-open won't fire again on subsequent launches.
+/// No map, radar, or media.
+///
+/// [encryptionKey] is null when the link reached us without its `#` fragment —
+/// Android does not always deliver it with an App Link. The memory is still
+/// recognised and tracked, but it cannot be opened, so the screen asks for the
+/// full link instead of failing silently.
 class GiftReceivedScreen extends StatefulWidget {
   const GiftReceivedScreen({
     super.key,
@@ -31,7 +34,7 @@ class GiftReceivedScreen extends StatefulWidget {
   });
 
   final String shareId;
-  final String encryptionKey;
+  final String? encryptionKey;
   final String? fromName;
 
   @override
@@ -43,21 +46,31 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
   bool _loading = true;
   bool _failed = false;
 
+  /// Filled in from the widget, then possibly upgraded when the user pastes
+  /// the full link on the "incomplete link" state.
+  String? _encryptionKey;
+
+  final TextEditingController _linkController = TextEditingController();
+  bool _linkError = false;
+
+  bool get _hasKey => _encryptionKey != null;
+
   @override
   void initState() {
     super.initState();
+    _encryptionKey = widget.encryptionKey;
     WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
+  }
+
+  @override
+  void dispose() {
+    _linkController.dispose();
+    super.dispose();
   }
 
   Future<void> _bootstrap() async {
     final userId = context.read<AuthProvider>().userId;
     try {
-      await PresentedSharesService.markPresented(widget.shareId);
-      // Clear clipboard so resume/bootstrap doesn't re-detect this link.
-      try {
-        await Clipboard.setData(const ClipboardData(text: ''));
-      } catch (_) {}
-
       if (userId == null) {
         throw const AuthException('You need to be signed in to receive this memory.');
       }
@@ -74,7 +87,10 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
         unlockTime: capsule.unlockTime,
         latitude: capsule.latitude,
         longitude: capsule.longitude,
-        encryptionKey: widget.encryptionKey,
+        // Null when the link arrived without its fragment. The upsert
+        // deliberately omits a null key rather than writing one, so a later
+        // paste of the full link can fill it in without being overwritten.
+        encryptionKey: _encryptionKey,
         fromName: widget.fromName,
         capsuleCreatedAt: capsule.createdAt,
       );
@@ -100,6 +116,43 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
     return c.isUnlocked && !c.isPending;
   }
 
+  /// Accepts the full link pasted by the user when the key did not survive the
+  /// trip. Only a link for THIS memory is accepted — pasting someone else's
+  /// would silently swap which memory they are about to open.
+  Future<void> _submitFullLink() async {
+    final parsed = ShareLinkParser.parseParts(_linkController.text);
+    if (parsed is! ShareLinkModel || parsed.shareId != widget.shareId) {
+      setState(() => _linkError = true);
+      return;
+    }
+
+    setState(() {
+      _encryptionKey = parsed.encryptionKey;
+      _linkError = false;
+    });
+
+    // Persist the key so the Vault can open this memory later too.
+    final userId = context.read<AuthProvider>().userId;
+    final capsule = _capsule;
+    if (userId != null && capsule != null) {
+      try {
+        await SupabaseService.upsertReceivedCapsule(
+          userId: userId,
+          capsuleId: capsule.id,
+          shareId: capsule.shareId,
+          unlockTime: capsule.unlockTime,
+          latitude: capsule.latitude,
+          longitude: capsule.longitude,
+          encryptionKey: parsed.encryptionKey,
+          fromName: widget.fromName ?? parsed.fromName,
+          capsuleCreatedAt: capsule.createdAt,
+        );
+      } catch (e) {
+        if (mounted) AppSnackbar.showError(context, e);
+      }
+    }
+  }
+
   void _goBack() {
     if (Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
@@ -117,11 +170,13 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
   }
 
   void _openNow() {
+    final key = _encryptionKey;
+    if (key == null) return; // The button is not offered without a key.
     final nav = Navigator.of(context);
     final radarPage = SpringPageRoute(
       page: RadarScreen(
         shareId: widget.shareId,
-        encryptionKey: widget.encryptionKey,
+        encryptionKey: key,
         fromName: widget.fromName,
       ),
     );
@@ -180,37 +235,71 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
                         ],
                         const SizedBox(height: AppSpacing.md),
                         Text(
-                          _isReady
-                              ? 'It\'s ready to discover — find the place and open it.'
-                              : 'It\'s been saved to your Vault. When the time comes, open it there.',
+                          !_hasKey
+                              ? 'To open it, TimeDrop needs the whole link — the '
+                                  'part after the # carries the key, and it did '
+                                  'not come through.'
+                              : _isReady
+                                  ? 'It\'s ready to discover — find the place and open it.'
+                                  : 'It\'s been saved to your Vault. When the time comes, open it there.',
                           textAlign: TextAlign.center,
                           style: AppTypography.bodyMd.copyWith(
                             color: AppColors.onSurfaceVariant,
                           ),
                         ),
-                        if (!_isReady && _capsule != null) ...[
-                          const SizedBox(height: AppSpacing.xl),
-                          CountdownTimer(target: _capsule!.unlockTime),
-                        ],
-                        const Spacer(flex: 3),
-                        if (_isReady) ...[
-                          PrimaryButton(label: 'Open now', onPressed: _openNow),
+
+                        // ── Missing key: ask for the full link ──────────────
+                        if (!_hasKey) ...[
+                          const SizedBox(height: AppSpacing.lg),
+                          TextField(
+                            controller: _linkController,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            decoration: InputDecoration(
+                              hintText: 'Paste the full link',
+                              errorText: _linkError
+                                  ? 'That link is for a different memory, or it '
+                                      'is still missing the key.'
+                                  : null,
+                            ),
+                            onSubmitted: (_) => _submitFullLink(),
+                          ),
                           const SizedBox(height: AppSpacing.sm),
+                          PrimaryButton(label: 'Unlock', onPressed: _submitFullLink),
+                          const Spacer(flex: 3),
                           TextButton(
                             onPressed: _goBack,
                             child: Text(
-                              'Save for later',
-                              style: AppTypography.labelMd.copyWith(
-                                color: AppColors.onSurfaceVariant,
-                              ),
+                              'Later',
+                              style: AppTypography.labelMd
+                                  .copyWith(color: AppColors.onSurfaceVariant),
                             ),
                           ),
-                        ] else if (!canPop) ...[
-                          // Fresh receive from a link: guide user to the Vault.
-                          PrimaryButton(label: 'Open My Vault', onPressed: _openVault),
+                        ] else ...[
+                          if (!_isReady && _capsule != null) ...[
+                            const SizedBox(height: AppSpacing.xl),
+                            CountdownTimer(target: _capsule!.unlockTime),
+                          ],
+                          const Spacer(flex: 3),
+                          if (_isReady) ...[
+                            PrimaryButton(label: 'Open now', onPressed: _openNow),
+                            const SizedBox(height: AppSpacing.sm),
+                            TextButton(
+                              onPressed: _goBack,
+                              child: Text(
+                                'Save for later',
+                                style: AppTypography.labelMd.copyWith(
+                                  color: AppColors.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ] else if (!canPop) ...[
+                            // Fresh receive from a link: guide user to the Vault.
+                            PrimaryButton(label: 'Open My Vault', onPressed: _openVault),
+                          ],
+                          // When canPop=true (came from the Vault), no bottom
+                          // button is needed — the AppBar back arrow suffices.
                         ],
-                        // When canPop=true (came from the Vault), no bottom button
-                        // is needed — the AppBar back arrow is sufficient.
                       ],
                     ),
         ),

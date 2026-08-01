@@ -17,6 +17,7 @@ class MemoryCard extends StatelessWidget {
     this.createdAt,
     this.status = 'ready',
     this.onRetry,
+    this.onDiscard,
     this.onTap,
     this.accentColor,
   });
@@ -26,6 +27,10 @@ class MemoryCard extends StatelessWidget {
   final DateTime? createdAt;
   final String status;
   final VoidCallback? onRetry;
+
+  /// Throws the drop away instead of retrying. Only surfaced on a failed
+  /// upload, as a secondary icon next to the retry affordance.
+  final VoidCallback? onDiscard;
   final VoidCallback? onTap;
   final Color? accentColor;
 
@@ -131,9 +136,26 @@ class MemoryCard extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (_isFailed)
-                    const Icon(Icons.refresh, size: 18, color: AppColors.error)
-                  else if (onTap != null)
+                  if (_isFailed) ...[
+                    const Icon(Icons.refresh, size: 18, color: AppColors.error),
+                    if (onDiscard != null)
+                      Semantics(
+                        button: true,
+                        label: 'Discard this failed drop',
+                        child: InkWell(
+                          onTap: onDiscard,
+                          customBorder: const CircleBorder(),
+                          child: const Padding(
+                            padding: EdgeInsets.all(AppSpacing.sm),
+                            child: Icon(
+                              Icons.close,
+                              size: 18,
+                              color: AppColors.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ] else if (onTap != null)
                     const Icon(Icons.chevron_right, size: 20, color: AppColors.onSurfaceVariant),
                 ],
               ),

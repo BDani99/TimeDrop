@@ -9,13 +9,17 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_radii.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
+import '../../models/drop_state_model.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/drop_balance_provider.dart';
+import '../../providers/payment_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/supabase_service.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/glass/glass_panel.dart';
 import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/primary_button.dart';
+import 'paywall_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -27,12 +31,15 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _isBusy = false;
 
-  Future<void> _runGuarded(Future<void> Function() action) async {
+  Future<void> _runGuarded(
+    Future<void> Function() action, {
+    required String successMessage,
+  }) async {
     setState(() => _isBusy = true);
     try {
       await action();
       if (!mounted) return;
-      AppSnackbar.showSuccess(context, 'Account linked.');
+      AppSnackbar.showSuccess(context, successMessage);
     } catch (e) {
       if (!mounted) return;
       AppSnackbar.showError(context, e);
@@ -41,13 +48,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _confirmDeleteAccount() async {
+  /// App Store guideline 3.1.1 requires a restore path, and reviewers look for
+  /// it in Settings rather than only behind the paywall.
+  Future<void> _restorePurchases() async {
+    setState(() => _isBusy = true);
+    try {
+      final drops = context.read<DropBalanceProvider>();
+      final restored = await context.read<PaymentProvider>().restore(drops);
+      if (!mounted) return;
+      if (restored) {
+        AppSnackbar.showSuccess(context, 'Subscription restored.');
+      } else {
+        AppSnackbar.showMessage(context, 'No previous purchases found.');
+      }
+    } catch (e) {
+      if (mounted) AppSnackbar.showError(context, e);
+    } finally {
+      if (mounted) setState(() => _isBusy = false);
+    }
+  }
+
+  /// Opens the platform's own subscription management page. Apple expects an
+  /// auto-renewable subscription to be manageable from inside the app.
+  Future<void> _manageSubscription() async {
+    final url = Platform.isIOS
+        ? 'https://apps.apple.com/account/subscriptions'
+        : 'https://play.google.com/store/account/subscriptions';
+    try {
+      final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      if (!ok && mounted) {
+        AppSnackbar.showMessage(context, 'Could not open the store.');
+      }
+    } catch (e) {
+      if (mounted) AppSnackbar.showError(context, e);
+    }
+  }
+
+  Future<void> _confirmSignOut() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete account?'),
+        title: const Text('Sign out?'),
         content: const Text(
-          'This signs you out of this device. Memories tied to this account may no longer be reachable from here.',
+          'This device goes back to a fresh anonymous account. Your linked '
+          'account keeps everything — sign back in any time to get it back.',
         ),
         actions: [
           TextButton(
@@ -56,13 +100,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Delete'),
+            child: const Text('Sign out'),
           ),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
 
+    await _runGuarded(
+      () => context.read<AuthProvider>().signOut(),
+      successMessage: 'Signed out.',
+    );
+    if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
+  Future<void> _confirmDeleteAccount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete account?'),
+        content: const Text(
+          'This permanently erases your account, every memory you have '
+          'recorded, and every memory you have kept.\n\n'
+          'Drops you already shared will stop working — the people you sent '
+          'them to will no longer be able to open them.\n\n'
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete everything'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isBusy = true);
     try {
       await context.read<AuthProvider>().deleteAccount();
       if (!mounted) return;
@@ -70,6 +149,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (e) {
       if (!mounted) return;
       AppSnackbar.showError(context, e);
+    } finally {
+      if (mounted) setState(() => _isBusy = false);
     }
   }
 
@@ -104,17 +185,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   PrimaryButton(
                     label: 'Continue with Apple',
                     isLoading: _isBusy,
-                    onPressed: () => _runGuarded(() => context.read<AuthProvider>().linkApple()),
+                    onPressed: () => _runGuarded(
+                      () => context.read<AuthProvider>().linkApple(),
+                      successMessage: 'Account linked.',
+                    ),
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   OutlinedButton(
                     onPressed: _isBusy
                         ? null
-                        : () => _runGuarded(() => context.read<AuthProvider>().linkGoogle()),
+                        : () => _runGuarded(
+                              () => context.read<AuthProvider>().linkGoogle(),
+                              successMessage: 'Account linked.',
+                            ),
                     child: const Text('Continue with Google'),
+                  ),
+                ] else ...[
+                  const SizedBox(height: AppSpacing.md),
+                  OutlinedButton(
+                    onPressed: _isBusy ? null : _confirmSignOut,
+                    child: const Text('Sign out'),
+                  ),
+                ],
+
+                // Only shown while a link succeeded but its data move did not.
+                if (auth.hasUnfinishedMerge) ...[
+                  const SizedBox(height: AppSpacing.md),
+                  Text(
+                    'Some memories from this device have not moved to your '
+                    'linked account yet.',
+                    style: AppTypography.labelSm.copyWith(color: AppColors.error),
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  OutlinedButton(
+                    onPressed: _isBusy
+                        ? null
+                        : () => _runGuarded(
+                              () => context.read<AuthProvider>().retryPendingMerge(),
+                              successMessage: 'Memories moved across.',
+                            ),
+                    child: const Text('Retry moving memories'),
                   ),
                 ],
               ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+
+          // ── Drops & subscription ───────────────────────────────────────────
+          _SubscriptionPanel(
+            isBusy: _isBusy,
+            onRestore: _restorePurchases,
+            onManage: _manageSubscription,
+            onSeePlans: () => Navigator.push(
+              context,
+              SpringPageRoute(page: const PaywallScreen()),
             ),
           ),
           const SizedBox(height: AppSpacing.md),
@@ -131,7 +256,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ]),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  'Deleting your account signs you out of this device. Memories may no longer be reachable.',
+                  'Deleting your account erases every memory you have recorded '
+                  'or kept, and stops the drops you already shared from ever '
+                  'opening. It cannot be undone.',
                   style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
                 ),
                 const SizedBox(height: AppSpacing.sm),
@@ -140,7 +267,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     foregroundColor: AppColors.error,
                     side: const BorderSide(color: AppColors.error),
                   ),
-                  onPressed: _confirmDeleteAccount,
+                  onPressed: _isBusy ? null : _confirmDeleteAccount,
                   child: const Text('Delete account'),
                 ),
               ],
@@ -328,6 +455,160 @@ Future<void> _showFeedbackSheet(BuildContext context, {required String initialTy
     backgroundColor: Colors.transparent,
     builder: (_) => _FeedbackSheet(initialType: initialType),
   );
+}
+
+/// Drops and subscription, in one place.
+///
+/// "Restore purchases" and a link to the store's own subscription management
+/// page both live here because App Store review expects to find them in
+/// Settings, not only behind the paywall.
+class _SubscriptionPanel extends StatelessWidget {
+  const _SubscriptionPanel({
+    required this.isBusy,
+    required this.onRestore,
+    required this.onManage,
+    required this.onSeePlans,
+  });
+
+  final bool isBusy;
+  final VoidCallback onRestore;
+  final VoidCallback onManage;
+  final VoidCallback onSeePlans;
+
+  static String _formatDate(DateTime dt) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final local = dt.toLocal();
+    return '${months[local.month - 1]} ${local.day}, ${local.year}';
+  }
+
+  String _statusLine(DropState state, bool isSubscribed) {
+    if (state.isReviewer) return 'Reviewer access — unlimited drops.';
+    switch (state.subscriptionStatus) {
+      case 'active':
+        final until = state.subscriptionExpiresAt;
+        return until == null
+            ? 'TimeDrop Pro is active.'
+            : 'TimeDrop Pro — renews ${_formatDate(until)}.';
+      case 'grace':
+        return 'There is a problem with your payment. Your drops stay active '
+            'for a few more days.';
+      case 'expired':
+        return 'Your subscription has ended. Drops you bought separately are '
+            'still yours.';
+      default:
+        return isSubscribed
+            ? 'TimeDrop Pro is active.'
+            : 'No subscription — you can still buy drops one at a time.';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final drops = context.watch<DropBalanceProvider>();
+    final payment = context.watch<PaymentProvider>();
+    final state = drops.state;
+
+    return GlassPanel(
+      useBlur: false,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(children: [
+            const Icon(Icons.confirmation_number_outlined, color: AppColors.primary),
+            const SizedBox(width: AppSpacing.sm),
+            Text('Drops', style: AppTypography.headlineMd),
+          ]),
+          const SizedBox(height: AppSpacing.sm),
+
+          Text(
+            _statusLine(state, payment.isSubscribed),
+            style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
+          ),
+
+          // Only shown once a real balance has arrived — a placeholder zero
+          // would read as "you have nothing" while it is still loading.
+          if (drops.isLoaded && !state.isReviewer) ...[
+            const SizedBox(height: AppSpacing.md),
+            _BalanceRow(label: 'Free', value: state.freeRemaining),
+            _BalanceRow(
+              label: 'From your subscription',
+              value: state.subscriptionRemaining,
+              note: state.nextCycleResetAt == null
+                  ? null
+                  : 'resets ${_formatDate(state.nextCycleResetAt!)}',
+            ),
+            _BalanceRow(label: 'Bought separately', value: state.purchasedRemaining),
+            const Divider(height: AppSpacing.md),
+            _BalanceRow(label: 'Total', value: state.totalRemaining, emphasise: true),
+          ],
+
+          const SizedBox(height: AppSpacing.md),
+          PrimaryButton(
+            label: payment.isSubscribed ? 'Get more drops' : 'See plans',
+            onPressed: onSeePlans,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          OutlinedButton(
+            onPressed: isBusy ? null : onRestore,
+            child: Text(isBusy ? 'Restoring…' : 'Restore purchases'),
+          ),
+          if (payment.isSubscribed) ...[
+            const SizedBox(height: AppSpacing.xs),
+            TextButton(
+              onPressed: onManage,
+              child: const Text('Manage subscription'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _BalanceRow extends StatelessWidget {
+  const _BalanceRow({
+    required this.label,
+    required this.value,
+    this.note,
+    this.emphasise = false,
+  });
+
+  final String label;
+  final int value;
+  final String? note;
+  final bool emphasise;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = emphasise
+        ? AppTypography.labelMd.copyWith(color: AppColors.onSurface)
+        : AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: style),
+                if (note != null)
+                  Text(
+                    note!,
+                    style: AppTypography.labelSm
+                        .copyWith(color: AppColors.onSurfaceVariant),
+                  ),
+              ],
+            ),
+          ),
+          Text('$value', style: style),
+        ],
+      ),
+    );
+  }
 }
 
 class _SettingsTile extends StatelessWidget {

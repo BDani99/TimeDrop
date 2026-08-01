@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'core/theme/app_theme.dart';
 import 'providers/auth_provider.dart';
 import 'providers/capsule_provider.dart';
+import 'providers/drop_balance_provider.dart';
 import 'providers/vault_provider.dart';
 import 'providers/payment_provider.dart';
 import 'providers/settings_provider.dart';
@@ -28,6 +29,7 @@ class TimeDropApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => VaultProvider()),
         ChangeNotifierProvider(create: (_) => PaymentProvider()..initialize()),
         ChangeNotifierProvider(create: (_) => SettingsProvider()),
+        ChangeNotifierProvider(create: (_) => DropBalanceProvider()),
       ],
       child: MaterialApp(
         title: 'TimeDrop',

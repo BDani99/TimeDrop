@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Universal Links. Apple fetches
+	     https://time-drop-pink.vercel.app/.well-known/apple-app-site-association
+	     when the app is installed; the appIDs entry there must carry the real
+	     Team ID or links keep opening the browser. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:time-drop-pink.vercel.app</string>
+	</array>
+</dict>
+</plist>

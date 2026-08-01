@@ -1,0 +1,15 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["REPLACE_WITH_APPLE_TEAM_ID.com.timedrop.timedropMobile"],
+        "components": [
+          {
+            "/": "/c/*",
+            "comment": "Share links open the memory directly in the app."
+          }
+        ]
+      }
+    ]
+  }
+}
