@@ -45,6 +45,28 @@ class ShareLinkParser {
 
   static final RegExp _pathPattern = RegExp(r'^/c/([A-Za-z0-9]{6})$');
 
+  /// The app's own scheme, used by the web landing page's "Open in TimeDrop"
+  /// button — `timedrop://c/ABC123?from=Dani#key`. It exists because a link
+  /// pointing at the same domain the browser is already showing does not
+  /// re-trigger Universal/App Link handling, so the https form cannot get a
+  /// recipient off the web page and into the app.
+  static const String appScheme = 'timedrop';
+
+  /// Builds the custom-scheme form of a share link. Kept here so the web page
+  /// and the app agree on one shape.
+  static String buildAppSchemeUrl({
+    required String shareId,
+    required String encryptionKey,
+    String? fromName,
+  }) {
+    final buffer = StringBuffer('$appScheme://c/$shareId');
+    if (fromName != null && fromName.isNotEmpty) {
+      buffer.write('?from=${Uri.encodeQueryComponent(fromName)}');
+    }
+    buffer.write('#$encryptionKey');
+    return buffer.toString();
+  }
+
   /// Returns null if [text] doesn't look like a TimeDrop share link — callers
   /// treat that as "nothing to do", not an error.
   static ShareLinkModel? tryParse(String text) {
@@ -72,10 +94,21 @@ class ShareLinkParser {
       return null;
     }
 
-    final expectedHost = Uri.parse(AppConstants.shareBaseUrl).host;
-    if (uri.host != expectedHost) return null;
+    // Two shapes reach us: the https link people actually send, and the
+    // `timedrop://` form the web page uses to hand off to the app. In the
+    // custom-scheme URL the authority is `c`, so the share id sits in the path
+    // on its own — normalise both to `/c/<id>` before matching.
+    final String path;
+    if (uri.scheme == appScheme) {
+      if (uri.host != 'c') return null;
+      path = '/c${uri.path}';
+    } else {
+      final expectedHost = Uri.parse(AppConstants.shareBaseUrl).host;
+      if (uri.host != expectedHost) return null;
+      path = uri.path;
+    }
 
-    final match = _pathPattern.firstMatch(uri.path);
+    final match = _pathPattern.firstMatch(path);
     if (match == null) return null;
 
     final shareId = match.group(1)!;

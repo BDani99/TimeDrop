@@ -57,6 +57,18 @@
                     android:host="time-drop-pink.vercel.app"
                     android:pathPrefix="/c/"/>
             </intent-filter>
+
+            <!-- Custom scheme, used only by the web landing page's "Open in
+                 TimeDrop" button. The App Link above cannot do that job: a link
+                 to the same domain the page is already on does not re-trigger
+                 Universal/App Link handling, so a recipient who ends up on the
+                 web page has no way back into the app without this. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="timedrop"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

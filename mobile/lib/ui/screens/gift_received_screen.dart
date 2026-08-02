@@ -80,6 +80,11 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
         throw const CapsuleException('This memory could not be found.');
       }
 
+      // A link that lost its `#` fragment is not necessarily a dead end: if
+      // the sender chose "openable with the code too", the key comes back with
+      // the capsule and the recipient never learns anything went missing.
+      _encryptionKey ??= capsule.codeUnlockKey;
+
       await SupabaseService.upsertReceivedCapsule(
         userId: userId,
         capsuleId: capsule.id,

@@ -96,6 +96,7 @@ class CapsuleProvider extends ChangeNotifier {
     required String creatorId,
     String? note,
     int? coverPhotoIndex,
+    bool allowCodeUnlock = false,
   }) async {
     isCreating = true;
     notifyListeners();
@@ -128,6 +129,9 @@ class CapsuleProvider extends ChangeNotifier {
             latitude: latitude,
             longitude: longitude,
             unlockTime: unlockTime,
+            // Only when the sender asked for it. This is the one place the
+            // key can reach the server, and it is a per-drop decision.
+            codeUnlockKey: allowCodeUnlock ? keyUrlSafe : null,
           );
           capsuleId = lastReserveResult['capsule_id'] as String;
           shareId = candidate;

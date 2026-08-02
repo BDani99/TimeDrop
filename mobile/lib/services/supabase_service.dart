@@ -207,6 +207,7 @@ class SupabaseService {
     required double latitude,
     required double longitude,
     required DateTime unlockTime,
+    String? codeUnlockKey,
   }) async {
     try {
       final rows = await client.rpc(
@@ -216,6 +217,10 @@ class SupabaseService {
           'p_latitude': latitude,
           'p_longitude': longitude,
           'p_unlock_time': unlockTime.toUtc().toIso8601String(),
+          // Non-null ONLY when the sender chose to let the bare code open this
+          // drop. Sending the key here hands the server the ability to decrypt
+          // this one memory — see migration 0030.
+          'p_code_unlock_key': codeUnlockKey,
         },
       );
       final list = rows as List;
@@ -580,6 +585,7 @@ class SupabaseService {
   static Future<void> markReceivedCapsuleViewed({
     required String userId,
     required String capsuleId,
+    double? unlockDistanceMeters,
   }) async {
     try {
       await client
@@ -587,6 +593,9 @@ class SupabaseService {
           .update({
             'is_viewed': true,
             'viewed_at': DateTime.now().toUtc().toIso8601String(),
+            // Only sent when we actually measured it — a replay must not
+            // overwrite the real reading with a null.
+            'unlock_distance_meters': ?unlockDistanceMeters,
           })
           .eq('user_id', userId)
           .eq('capsule_id', capsuleId);

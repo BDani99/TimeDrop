@@ -131,6 +131,12 @@ class VaultProvider extends ChangeNotifier {
       throw const CapsuleException('No memory found with that code.');
     }
 
+    // A bare code carries no key. It can still open the memory when the
+    // sender chose "openable with the code too" — then, and only then, the
+    // server hands one back. Otherwise the drop lands in the Vault marked as
+    // needing the full link, exactly as before.
+    final key = link?.encryptionKey ?? capsule.codeUnlockKey;
+
     await SupabaseService.upsertReceivedCapsule(
       userId: userId,
       capsuleId: capsule.id,
@@ -138,12 +144,17 @@ class VaultProvider extends ChangeNotifier {
       unlockTime: capsule.unlockTime,
       latitude: capsule.latitude,
       longitude: capsule.longitude,
-      encryptionKey: link?.encryptionKey,
+      encryptionKey: key,
       fromName: link?.fromName,
       capsuleCreatedAt: capsule.createdAt,
     );
     await load(userId);
-    return link;
+
+    // Report a usable link back to the caller so a code-unlockable drop jumps
+    // straight to the Radar, the same way a full link does.
+    if (link != null) return link;
+    if (key == null) return null;
+    return ShareLinkModel(shareId: capsule.shareId, encryptionKey: key);
   }
 
   /// Re-opens an already-viewed capsule for replay — cache-first (offline),

@@ -19,6 +19,7 @@ class ReceivedCapsuleModel {
     this.capsuleCreatedAt,
     this.unlockedAt,
     this.viewedAt,
+    this.unlockDistanceMeters,
   });
 
   final String id;
@@ -44,6 +45,11 @@ class ReceivedCapsuleModel {
   final DateTime? capsuleCreatedAt;
   final DateTime? unlockedAt;
   final DateTime? viewedAt;
+
+  /// How far away the recipient was standing when this opened, recorded once
+  /// at first view so the keepsake card reads the same on every replay. Null
+  /// for memories opened before it was captured.
+  final double? unlockDistanceMeters;
 
   bool get hasKey => encryptionKey != null;
   bool get isUnlockTimeReached => DateTime.now().toUtc().isAfter(unlockTime.toUtc());
@@ -91,6 +97,8 @@ class ReceivedCapsuleModel {
       capsuleCreatedAt: parseOptional('capsule_created_at'),
       unlockedAt: parseOptional('unlocked_at'),
       viewedAt: parseOptional('viewed_at'),
+      unlockDistanceMeters:
+          (json['unlock_distance_meters'] as num?)?.toDouble(),
     );
   }
 }

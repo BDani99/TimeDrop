@@ -244,37 +244,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: AppSpacing.md),
 
-          // ── Danger zone ────────────────────────────────────────────────────
-          GlassPanel(useBlur: false,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(children: [
-                  const Icon(Icons.warning_amber_outlined, color: AppColors.error),
-                  const SizedBox(width: AppSpacing.sm),
-                  Text('Privacy', style: AppTypography.headlineMd),
-                ]),
-                const SizedBox(height: AppSpacing.xs),
-                Text(
-                  'Deleting your account erases every memory you have recorded '
-                  'or kept, and stops the drops you already shared from ever '
-                  'opening. It cannot be undone.',
-                  style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.error,
-                    side: const BorderSide(color: AppColors.error),
-                  ),
-                  onPressed: _isBusy ? null : _confirmDeleteAccount,
-                  child: const Text('Delete account'),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: AppSpacing.md),
-
           // ── Display ───────────────────────────────────────────────────────
           GlassPanel(useBlur: false,
             child: Column(
@@ -395,6 +364,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   icon: Icons.article_outlined,
                   label: 'Terms of Service',
                   onTap: () => _openUrl(context, AppConstants.termsUrl),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+
+          // ── Privacy / danger zone ──────────────────────────────────────────
+          // Kept second-to-last, immediately above About: account deletion is
+          // irreversible, so it should be something you scroll down to, not
+          // something you pass on the way to the display toggles.
+          GlassPanel(useBlur: false,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(children: [
+                  const Icon(Icons.warning_amber_outlined, color: AppColors.error),
+                  const SizedBox(width: AppSpacing.sm),
+                  Text('Privacy', style: AppTypography.headlineMd),
+                ]),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'Deleting your account erases every memory you have recorded '
+                  'or kept, and stops the drops you already shared from ever '
+                  'opening. It cannot be undone.',
+                  style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.error,
+                    side: const BorderSide(color: AppColors.error),
+                  ),
+                  onPressed: _isBusy ? null : _confirmDeleteAccount,
+                  child: const Text('Delete account'),
                 ),
               ],
             ),

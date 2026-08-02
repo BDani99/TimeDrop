@@ -18,6 +18,7 @@ import '../../services/clipboard_service.dart';
 import '../../services/media_cache_service.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/loading/skeleton_box.dart';
+import '../widgets/memory/keepsake_card.dart';
 import '../widgets/vault/new_memory_highlight.dart';
 import '../widgets/vault/vault_calendar_view.dart';
 import 'memory_detail_screen.dart';
@@ -251,6 +252,14 @@ class _VaultScreenState extends State<VaultScreen> {
             capturedAt: item.capsuleCreatedAt ?? item.unlockTime,
             latitude: item.latitude,
             longitude: item.longitude,
+            // The keepsake card stays with the memory: it is the last page
+            // here too, drawn from what was written down at first view.
+            facts: MemoryFacts(
+              capturedAt: item.capsuleCreatedAt ?? item.unlockTime,
+              fromName: item.fromName,
+              placeLabel: item.city,
+              distanceMeters: item.unlockDistanceMeters,
+            ),
           ),
         ),
       );

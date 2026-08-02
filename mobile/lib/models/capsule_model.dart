@@ -11,6 +11,7 @@ class CapsuleModel {
     required this.createdAt,
     this.status = 'ready',
     this.encryptedPayload,
+    this.codeUnlockKey,
     this.city,
   });
 
@@ -30,6 +31,12 @@ class CapsuleModel {
   /// payload exists.
   final String status;
   final String? encryptedPayload;
+
+  /// The decryption key, present only when the sender chose to let the bare
+  /// six-character code open this drop. Null — the default — means the key
+  /// exists nowhere but in the share link's `#` fragment, and the server has
+  /// never seen it. Withheld until the unlock time, like the payload.
+  final String? codeUnlockKey;
 
   bool get isUnlocked => DateTime.now().toUtc().isAfter(unlockTime.toUtc());
   bool get isPending => status == 'pending';
@@ -54,6 +61,7 @@ class CapsuleModel {
         createdAt: createdAt,
         status: status ?? this.status,
         encryptedPayload: encryptedPayload,
+        codeUnlockKey: codeUnlockKey,
         city: city ?? this.city,
       );
 
@@ -67,6 +75,7 @@ class CapsuleModel {
       createdAt: DateTime.parse(json['created_at'] as String),
       status: json['status'] as String? ?? 'ready',
       encryptedPayload: json['encrypted_payload'] as String?,
+      codeUnlockKey: json['code_unlock_key'] as String?,
       city: json['city'] as String?,
     );
   }

@@ -5,10 +5,13 @@ import { parseCurrentLocation } from './utils/linkParser';
 
 // This is the entire zero-backend trust boundary: parse the URL client-side
 // only, on mount, once. No fetch/XHR/WebSocket calls exist anywhere in this
-// app, and the hash fragment (the E2EE decryption key) is never read here —
-// only DownloadButton's copyCurrentUrl() touches it, and only to copy the
-// full URL verbatim. Do not add analytics/Sentry/GA to this file without
-// first stripping query/hash from whatever it captures.
+// app.
+//
+// The hash fragment (the E2EE decryption key) is read in exactly two places
+// and leaves in exactly two ways: into the `timedrop://` handoff URL, and onto
+// the clipboard as part of the verbatim page URL. It is never rendered, never
+// logged, and never sent over the network. Do not add analytics/Sentry/GA to
+// this app without first stripping query and hash from whatever it captures.
 function App() {
   const location = parseCurrentLocation();
 
@@ -16,7 +19,11 @@ function App() {
     <div className="flex min-h-screen w-full flex-col items-center justify-center px-6 py-16">
       <AnimatedMapBackground />
       {location.isShareLink ? (
-        <LandingCard shareId={location.shareId} fromName={location.fromName} />
+        <LandingCard
+          shareId={location.shareId}
+          fromName={location.fromName}
+          encryptionKey={location.encryptionKey}
+        />
       ) : (
         <FallbackCard />
       )}

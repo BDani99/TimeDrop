@@ -12,18 +12,27 @@ import '../widgets/primary_button.dart';
 import '../widgets/rituals/crystal_share_orb.dart';
 
 /// "Moment Sealed" confirmation screen shown right after a capsule is
-/// created — shows the share code + lets the sender copy/share the link.
+/// created — the code, then the link.
+///
+/// The code leads because it is the part a person can read out, write down or
+/// retype, and because a link pasted into a chat app is the thing most likely
+/// to arrive broken. Sending the link is still the one-tap path, and it is
+/// still what carries the key when [codeUnlock] is false.
 class ShareScreen extends StatelessWidget {
   const ShareScreen({
     super.key,
     required this.shareId,
     required this.encryptionKey,
     this.fromName,
+    this.codeUnlock = false,
   });
 
   final String shareId;
   final String encryptionKey;
   final String? fromName;
+
+  /// The sender allowed this drop to be opened with the code alone.
+  final bool codeUnlock;
 
   @override
   Widget build(BuildContext context) {
@@ -66,35 +75,64 @@ class ShareScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: AppSpacing.lg),
                       GlassPanel(
-                        child: Row(
+                        child: Column(
                           children: [
-                            Expanded(
-                              child: Text(
-                                shareId,
-                                textAlign: TextAlign.center,
-                                style: AppTypography.headlineMd.copyWith(fontFamily: 'monospace'),
-                              ),
+                            Text(
+                              'Their code',
+                              style: AppTypography.labelSm
+                                  .copyWith(color: AppColors.onSurfaceVariant),
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.copy, color: AppColors.primary),
-                              onPressed: () async {
-                                try {
-                                  await ClipboardService.copyToClipboard(shareId);
-                                  await AppHaptics.medium();
-                                  if (context.mounted) {
-                                    AppSnackbar.showMessage(context, 'Copied!');
-                                  }
-                                } catch (e) {
-                                  if (context.mounted) AppSnackbar.showError(context, e);
-                                }
-                              },
+                            const SizedBox(height: AppSpacing.xs),
+                            Row(
+                              children: [
+                                const SizedBox(width: 48),
+                                Expanded(
+                                  child: Text(
+                                    shareId,
+                                    textAlign: TextAlign.center,
+                                    style: AppTypography.headlineLg.copyWith(
+                                      fontFamily: 'monospace',
+                                      letterSpacing: 4,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.copy,
+                                      color: AppColors.primary),
+                                  onPressed: () async {
+                                    try {
+                                      await ClipboardService.copyToClipboard(
+                                          shareId);
+                                      await AppHaptics.medium();
+                                      if (context.mounted) {
+                                        AppSnackbar.showMessage(
+                                            context, 'Code copied.');
+                                      }
+                                    } catch (e) {
+                                      if (context.mounted) {
+                                        AppSnackbar.showError(context, e);
+                                      }
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            Text(
+                              codeUnlock
+                                  ? 'They can type this straight into TimeDrop.'
+                                  : 'This finds the memory. To open it, they '
+                                      'also need the link below.',
+                              textAlign: TextAlign.center,
+                              style: AppTypography.labelSm
+                                  .copyWith(color: AppColors.onSurfaceVariant),
                             ),
                           ],
                         ),
                       ),
                       const SizedBox(height: AppSpacing.lg),
                       PrimaryButton(
-                        label: 'Send to your loved one',
+                        label: 'Send the link',
                         onPressed: () async {
                           try {
                             await ShareService.shareCapsuleLink(url);
@@ -103,6 +141,13 @@ class ShareScreen extends StatelessWidget {
                             if (context.mounted) AppSnackbar.showError(context, e);
                           }
                         },
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        'Opens straight into their TimeDrop.',
+                        textAlign: TextAlign.center,
+                        style: AppTypography.labelSm
+                            .copyWith(color: AppColors.onSurfaceVariant),
                       ),
                       const SizedBox(height: AppSpacing.sm),
                       TextButton(

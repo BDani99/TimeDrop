@@ -14,6 +14,24 @@ class LocalPrefsService {
   static const _keyMirrorDropPhotos = 'pref_mirror_drop_photos';
   static const _keyPendingMerge = 'pending_merge_v1';
   static const _keyOnboardingDone = 'onboarding_completed_v1';
+  static const _keyHandoffChecked = 'install_handoff_checked_v1';
+
+  /// Whether we have already done the one-and-only clipboard check that
+  /// carries a share link through an app install.
+  ///
+  /// The web landing page puts the full link on the clipboard before sending
+  /// someone to the store, because nothing else survives an install — iOS has
+  /// no install referrer, and the stores pass nothing through. So the app
+  /// looks exactly once, on its very first launch, and never again. The
+  /// previous design read the clipboard on every single foreground; that is
+  /// what this flag exists to prevent coming back.
+  static Future<bool> getInstallHandoffChecked() async {
+    return await _storage.read(key: _keyHandoffChecked) == 'true';
+  }
+
+  static Future<void> setInstallHandoffChecked() async {
+    await _storage.write(key: _keyHandoffChecked, value: 'true');
+  }
 
   /// Device-scoped copy of "this person has been through onboarding".
   ///

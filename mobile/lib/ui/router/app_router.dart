@@ -10,6 +10,8 @@ import '../../providers/capsule_provider.dart';
 import '../../providers/drop_balance_provider.dart';
 import '../../providers/payment_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../services/clipboard_service.dart';
+import '../../services/local_prefs_service.dart';
 import '../../services/system_settings_service.dart';
 import '../screens/gift_received_screen.dart';
 import '../screens/home_screen.dart';
@@ -172,6 +174,12 @@ class MainRouterState extends State<MainRouter> {
         debugPrint('Could not read the launch link: $e');
       }
 
+      // Nothing launched us, and this is the very first run: the link may be
+      // waiting on the clipboard, put there by the web page on the way to the
+      // store. This is the only clipboard read in the app's entire lifetime —
+      // see LocalPrefsService.getInstallHandoffChecked.
+      initial ??= await _claimInstallHandoff();
+
       if (!mounted) return;
       setState(() {
         if (initial is ShareLinkModel) {
@@ -186,6 +194,26 @@ class MainRouterState extends State<MainRouter> {
       if (!mounted) return;
       AppSnackbar.showError(context, e);
       setState(() => _bootstrapped = true);
+    }
+  }
+
+  /// The install handoff: a share link left on the clipboard by the web page
+  /// before it sent the user to the app store.
+  ///
+  /// Runs at most once per install, and only when nothing else brought us
+  /// here. Returns whatever it found so the caller can route to it in the same
+  /// frame as the rest of the bootstrap.
+  Future<Object?> _claimInstallHandoff() async {
+    try {
+      if (await LocalPrefsService.getInstallHandoffChecked()) return null;
+      // Marked before reading, not after: a crash mid-read must not turn this
+      // into a check that runs on every launch.
+      await LocalPrefsService.setInstallHandoffChecked();
+      final link = await ClipboardService.checkClipboardForShareLink();
+      return link;
+    } catch (e) {
+      debugPrint('Install handoff check failed: $e');
+      return null;
     }
   }
 

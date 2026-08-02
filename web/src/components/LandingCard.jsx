@@ -1,10 +1,18 @@
-import DownloadButton from './DownloadButton';
-import CopyLinkButton from './CopyLinkButton';
+import OpenInAppButton from './OpenInAppButton';
+import GetTheAppButton from './GetTheAppButton';
+import ShareCode from './ShareCode';
 
 // "Memory Card" pattern from design/DESIGN.md, mirrored from the mobile
 // app's memoryCardDecoration(): 32px rounded corners, ambient orange-tinted
 // shadow, 1px rose-gold border, cream/white surface.
-export default function LandingCard({ shareId, fromName }) {
+//
+// Most recipients never see this page: tapping the link in a chat app opens
+// TimeDrop directly. Reaching here means one of three things went wrong or
+// differently — the app is not installed, App Link verification has not taken
+// effect, or they are on a desktop. So the page has exactly two jobs: get an
+// installed app to open, and make sure someone who has to install it first
+// does not lose the memory on the way.
+export default function LandingCard({ shareId, fromName, encryptionKey }) {
   const headline = fromName
     ? `${fromName} left you a time capsule.`
     : 'Someone left you a time capsule.';
@@ -27,16 +35,18 @@ export default function LandingCard({ shareId, fromName }) {
       </h1>
 
       <p className="mb-8 text-base leading-relaxed text-[var(--color-on-surface-variant)]">
-        A moment, sealed in time and place. Get the TimeDrop app to see when
-        and where it unlocks.
+        A moment, sealed in time and place. Open it in TimeDrop to see when and
+        where it unlocks.
       </p>
 
-      <DownloadButton />
-      <CopyLinkButton />
+      <OpenInAppButton
+        shareId={shareId}
+        fromName={fromName}
+        encryptionKey={encryptionKey}
+      />
+      <GetTheAppButton />
 
-      <p className="mt-6 font-mono text-xs tracking-widest text-[var(--color-on-surface-variant)]/60 uppercase">
-        Share code {shareId}
-      </p>
+      <ShareCode shareId={shareId} />
     </div>
   );
 }

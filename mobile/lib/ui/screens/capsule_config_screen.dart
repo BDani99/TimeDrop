@@ -25,6 +25,7 @@ import '../../services/geolocation_service.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/loading/skeleton_box.dart';
 import '../widgets/glass/glass_bottom_sheet.dart';
+import '../widgets/glass/glass_panel.dart';
 import '../widgets/navigation/spring_page_route.dart';
 import '../widgets/rituals/seal_ritual_overlay.dart';
 import '../widgets/primary_button.dart';
@@ -67,6 +68,12 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
   final _nameController = TextEditingController();
   final List<String> _photoPaths = [];
   int? _coverPhotoIndex;
+
+  /// Off by default, and that default is the product: with it off, the key
+  /// exists only inside the share link and this app's servers cannot read the
+  /// memory at all. Turning it on trades that away for one drop, in exchange
+  /// for a code that works even when the link gets mangled.
+  bool _allowCodeUnlock = false;
 
   @override
   void initState() {
@@ -261,17 +268,23 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
       preview = FileImage(File(_photoPaths[_coverPhotoIndex!]));
     }
 
-    // Kick off the reserve concurrently with the ritual animation so the
-    // config screen never flashes between the overlay dismissing and the
-    // ShareScreen appearing. reserveCapsule() is a fast DB insert + schedules
-    // a background upload, so it almost always finishes before the ritual ends.
-    final sealFuture = _seal();
+    // The reserve runs alongside the ritual so the user never waits on the
+    // network — but nothing acts on its result until the ritual has finished.
+    // It used to navigate the moment the DB insert returned, which is a few
+    // hundred milliseconds against a two-second animation: the seal was cut
+    // off mid-close, every single time.
+    final sealFuture = _reserve();
     await SealRitualOverlay.show(context, previewImage: preview);
     if (!mounted) return;
-    await sealFuture; // navigation is handled inside _seal()
+    final outcome = await sealFuture;
+    if (!mounted) return;
+    _applySealOutcome(outcome);
   }
 
-  Future<void> _seal() async {
+  /// Reserves the capsule. Deliberately does no navigation and shows no
+  /// snackbar — a message raised under a full-screen ritual overlay is one the
+  /// user never sees. Everything is reported back to [_applySealOutcome].
+  Future<_SealOutcome> _reserve() async {
     final position = _position;
     final unlockTime = _unlockTime;
     final chosen = _selectedLatLng ??
@@ -290,7 +303,6 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
       if (settingsProvider.displayName != name) {
         await settingsProvider.setDisplayName(userId, name);
       }
-      if (!mounted) return;
       final info = await capsuleProvider.reserveCapsule(
         mediaPath: widget.videoPath,
         mimeType: widget.mimeType,
@@ -302,37 +314,48 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
         longitude: chosen.longitude,
         unlockTime: unlockTime!,
         creatorId: userId,
+        allowCodeUnlock: _allowCodeUnlock,
       );
-      if (!mounted) return;
+      return _SealOutcome.sealed(
+        info,
+        senderName: name,
+        codeUnlock: _allowCodeUnlock,
+      );
+    } on DropQuotaException catch (e) {
+      // The server refused on quota grounds. Offering more drops only helps
+      // when running out was the problem — not when a free drop was aimed too
+      // far ahead, where the fix is a nearer date.
+      return _SealOutcome.failed(e, offerMoreDrops: e.canBuyMore);
+    } catch (e) {
+      return _SealOutcome.failed(e);
+    }
+  }
+
+  void _applySealOutcome(_SealOutcome outcome) {
+    final info = outcome.info;
+    if (info != null) {
       final balances = info.balances;
       if (balances != null) {
         context.read<DropBalanceProvider>().applyFromRpc(balances);
       }
-      // Navigate as soon as reserve is done; if the ritual is still playing it
-      // will simply be replaced — the user sees a clean transition.
       Navigator.pushReplacement(
         context,
         SpringPageRoute(
           page: ShareScreen(
             shareId: info.shareId,
             encryptionKey: info.encryptionKey,
-            fromName: name,
+            fromName: outcome.senderName ?? '',
+            codeUnlock: outcome.codeUnlock,
           ),
         ),
       );
-    } on DropQuotaException catch (e) {
-      // The server refused on quota grounds. Offering more drops only helps
-      // when running out was the problem — not when a free drop was aimed too
-      // far ahead, where the fix is a nearer date.
-      if (!mounted) return;
-      AppSnackbar.showError(context, e);
-      if (e.canBuyMore) {
-        unawaited(context.read<DropBalanceProvider>().refresh());
-        Navigator.push(context, SpringPageRoute(page: const PaywallScreen()));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      AppSnackbar.showError(context, e);
+      return;
+    }
+
+    AppSnackbar.showError(context, outcome.error!);
+    if (outcome.offerMoreDrops) {
+      unawaited(context.read<DropBalanceProvider>().refresh());
+      Navigator.push(context, SpringPageRoute(page: const PaywallScreen()));
     }
   }
 
@@ -508,6 +531,13 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
               onSetCover: _setCover,
             ),
             const SizedBox(height: AppSpacing.lg),
+            Text('How they open it', style: AppTypography.headlineMd),
+            const SizedBox(height: AppSpacing.sm),
+            _CodeUnlockToggle(
+              value: _allowCodeUnlock,
+              onChanged: (v) => setState(() => _allowCodeUnlock = v),
+            ),
+            const SizedBox(height: AppSpacing.lg),
             PrimaryButton(
               label: 'Seal this Moment',
               isLoading: isCreating,
@@ -665,6 +695,85 @@ class _PhotoSourceTile extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Lets the sender decide, for this one drop, whether the six-character code
+/// is enough to open it.
+///
+/// The wording says what actually changes rather than naming a cryptographic
+/// property nobody outside this codebase should have to reason about — but it
+/// does not hide the cost, because storing the key is not reversible once the
+/// drop is sealed.
+class _CodeUnlockToggle extends StatelessWidget {
+  const _CodeUnlockToggle({required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassPanel(
+      useBlur: false,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Openable with the code alone',
+                  style: AppTypography.bodyMd,
+                ),
+              ),
+              Switch(
+                value: value,
+                activeThumbColor: AppColors.primary,
+                activeTrackColor: AppColors.primary.withValues(alpha: 0.4),
+                onChanged: onChanged,
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            value
+                ? 'They can open this by typing the code. Convenient — but it '
+                    'means we hold the key to this one memory, so we could read it.'
+                : 'They will need the whole link. Only they can ever open this '
+                    'memory — the key never reaches us.',
+            style: AppTypography.labelSm
+                .copyWith(color: AppColors.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// What the reserve produced, held until the seal ritual has finished playing.
+class _SealOutcome {
+  const _SealOutcome.sealed(
+    CapsuleShareInfo this.info, {
+    required this.senderName,
+    required this.codeUnlock,
+  })  : error = null,
+        offerMoreDrops = false;
+
+  const _SealOutcome.failed(Object this.error, {this.offerMoreDrops = false})
+      : info = null,
+        senderName = null,
+        codeUnlock = false;
+
+  final CapsuleShareInfo? info;
+  final String? senderName;
+  final Object? error;
+
+  /// Whether the sender allowed the bare code to open this drop — the share
+  /// screen says something different depending on the answer.
+  final bool codeUnlock;
+
+  /// True only when running out of drops was the actual problem — a free drop
+  /// aimed too far ahead is fixed with a nearer date, not with a purchase.
+  final bool offerMoreDrops;
 }
 
 /// Horizontal strip of attached photo thumbnails + an "add" tile (up to

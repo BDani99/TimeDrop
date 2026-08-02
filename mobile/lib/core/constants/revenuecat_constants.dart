@@ -25,4 +25,23 @@ class RevenueCatConstants {
   };
 
   static int? dropsForPackage(String identifier) => packDropCounts[identifier];
+
+  /// Drop counts in the order the paywall lists them.
+  ///
+  /// Used to render the pack tiles even when the store has told us nothing —
+  /// in mock mode, before the products exist in App Store Connect / Play
+  /// Console, or when the device is offline. Hiding the whole section in those
+  /// cases made a headline feature invisible and impossible to review.
+  static const List<int> packDropCountsInOrder = [1, 2, 3, 5, 10];
+
+  /// Placeholder prices, shown ONLY until the store's own localised figures
+  /// arrive. The real number always comes from `storeProduct.priceString`;
+  /// these exist so the tiles have a shape, not so they are accurate.
+  static const Map<int, String> placeholderPackPrices = {
+    1: r'$0.99',
+    2: r'$1.79',
+    3: r'$2.49',
+    5: r'$3.99',
+    10: r'$6.99',
+  };
 }

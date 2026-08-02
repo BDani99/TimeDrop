@@ -299,17 +299,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   sliver: SliverList(
                     delegate: SliverChildListDelegate([
-                      // Directly above the CTA, so the balance is read in the
-                      // same glance as the button that spends it.
-                      Center(
-                        child: DropBalanceChip(
-                          onTap: () => Navigator.push(
-                            context,
-                            SpringPageRoute(page: const PaywallScreen()),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
                       Center(
                         child: PrimaryButton(
                           label: 'Leave a Memory',
@@ -339,11 +328,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                         )
-                      else if (_capsules.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
-                          child: _EmptyState(),
-                        )
                       else ...[
                         Text(
                           'Memories you left',
@@ -358,7 +342,27 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: AppColors.onSurfaceVariant,
                           ),
                         ),
+                        // The balance belongs to this section, not to the CTA:
+                        // it answers "how many of these can I still make?",
+                        // which is the question the list itself raises. Shown
+                        // even with no memories yet — that is exactly when a
+                        // new user wants to know what they have.
+                        const SizedBox(height: AppSpacing.sm),
+                        Center(
+                          child: DropBalanceChip(
+                            onTap: () => Navigator.push(
+                              context,
+                              SpringPageRoute(page: const PaywallScreen()),
+                            ),
+                          ),
+                        ),
                         const SizedBox(height: AppSpacing.md),
+                        if (_capsules.isEmpty)
+                          const Padding(
+                            padding:
+                                EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                            child: _EmptyState(),
+                          ),
                         for (final capsule in visibleActive) ...[
                           _memoryCard(capsule),
                           const SizedBox(height: AppSpacing.sm),

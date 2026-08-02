@@ -90,29 +90,7 @@ update public.system_settings set value = 1 where key = 'free_drop_limit';
 > Szándékosan nem állítottam át: ha most 1-re megy, a saját teszteszközöd
 > azonnal elakad. Kiadás előtt viszont kötelező.
 
-### 5. Review-jelszó élesítése
-
-A store review csapatának kell egy belépési mód (10 koppintás a paywall
-címére → jelszó). A jelszó **szerveroldalon** van, nincs az APK-ban.
-
-1. Nyisd meg: `supabase/scripts/set_reviewer_passcode.sql.example`
-2. Másold le `set_reviewer_passcode.sql` néven (ez gitignore-olt)
-3. Cseréld a `<PASSCODE>` helyőrzőt a valódi jelszóra
-4. Futtasd le a Supabase SQL editorban
-5. Írd be ugyanazt a jelszót a store beküldési jegyzeteibe:
-   - App Store Connect → App Review Information → **Sign-in required** →
-     „Tap the paywall headline 10 times, then enter: `<PASSCODE>`"
-   - Play Console → App content → **App access** → ugyanez
-
-**Jóváhagyás után kapcsold ki** (nem kell hozzá app-frissítés):
-
-```sql
-update public.secret_settings
-   set setting_value = 'false'::jsonb, updated_at = now()
- where setting_key = 'reviewer_passcode_enabled';
-```
-
-### 6. Android release aláírás és App Link ujjlenyomat
+### 5. Android release aláírás és App Link ujjlenyomat
 
 A címzetti folyamat mostantól **deep linkre** épül: a kapott linkre koppintva
 az appnak kell megnyílnia, nem a böngészőnek. Ehhez a Google-nek ellenőriznie
@@ -146,7 +124,7 @@ adb shell pm get-app-links com.timedrop.timedrop_mobile
 A `time-drop-pink.vercel.app` sornak `verified`-nek kell lennie. Ha
 `legacy_failure`, akkor a fájl nem érhető el vagy az ujjlenyomat nem egyezik.
 
-### 7. iOS Team ID és associated domains
+### 6. iOS Team ID és associated domains
 
 Ugyanez Apple oldalon. A `Runner.entitlements` fájl **elkészült**
 (`applinks:time-drop-pink.vercel.app`), és a `CODE_SIGN_ENTITLEMENTS` mindhárom
@@ -160,32 +138,11 @@ konfigurációra be van állítva — de az AASA fájlba a **Team ID** kell.
 
 > A pontos kitöltési útmutató a `web/public/.well-known/README.md`-ben van.
 
-### 8. A web újratelepítése a `.well-known` fájlokkal
-
-A két fájl kitöltése után **a webet újra kell deployolni**, mert az Apple és a
-Google élőben tölti le őket a domainről.
-
-A `web/vercel.json` már fel van készítve rá: a `.well-known/` útvonal ki van
-véve az `index.html` rewrite alól (enélkül HTML-t kapnának JSON helyett), és
-mindkét fájl explicit `Content-Type: application/json` fejlécet kap — az
-`apple-app-site-association`-nak nincs kiterjesztése, e nélkül az Apple
-visszautasítaná.
-
-**Deploy után ellenőrizd böngészőből**, hogy JSON jön vissza és nem a weboldal:
-
-- `https://time-drop-pink.vercel.app/.well-known/assetlinks.json`
-- `https://time-drop-pink.vercel.app/.well-known/apple-app-site-association`
-
-> ⏱️ Az Apple CDN-je gyorsítótárazza az AASA-t. Ha rosszul töltötted ki és
-> javítod, a friss érték **akár egy napig** is késhet. Fejlesztés közben ezt
-> az iOS Settings → Developer → **Associated Domains Development** kapcsolóval
-> lehet megkerülni.
-
 ---
 
 ## 🟡 FONTOS — biztonsági teendők
 
-### 8/a. Elfogadott kockázat: `pg_net` a kliens szerepköröknek
+### 7. Elfogadott kockázat: `pg_net` a kliens szerepköröknek
 
 A `net.http_post` / `http_get` / `http_delete` EXECUTE joga a `PUBLIC`-on
 keresztül az `anon` és `authenticated` szerepköröknek is megvan — ez a
@@ -202,21 +159,7 @@ tagja annak, így a REVOKE csendben hatástalan (ezt is leteszteltem).
 Supabase támogatást a jog visszavonásához.
 
 
-### 9. API kulcsok rotálása
-
-A beszélgetés során kikerültek kulcsok:
-
-| Kulcs | Állapot | Teendő |
-|---|---|---|
-| RevenueCat v1 `sk_tSlWW…` | chatbe beírva | **Töröld** a dashboardon (v2 API-hoz úgyis használhatatlan) |
-| RevenueCat v2 `sk_HqNBI…` | képernyőképen | **Rotáld**, ha a transzkript bárhová kikerül |
-| Supabase PAT `sbp_749a…` | `.mcp.json`-ban | gitignore-olt, de érdemes rotálni |
-
-RevenueCat: Project Settings → API keys → a régi mellett `…` → Delete.
-Supabase: Account → Access Tokens → Revoke + új generálás, majd `.mcp.json`
-frissítése.
-
-### 10. Terms és Privacy oldalak
+### 8. Terms és Privacy oldalak
 
 Az appban a paywall alján ezekre mutat link, de jelenleg **placeholder**:
 
@@ -227,202 +170,51 @@ Mindkét store elutasítja a beküldést valódi tartalom nélkül. Az adatvéde
 tájékoztatóban ki kell térni: helyadat, kamera/mikrofon, végponttól végpontig
 titkosítás, fióktörlés, és az ingyen dropok 3 hónapos megőrzési ideje.
 
----
-
-## 🟢 TESZTELÉS ESZKÖZÖN
-
-Ezeket nem tudtam elvégezni — nincs bekötött eszköz/emulátor.
-
-### 11. Onboarding végigjátszása
-
-- [ ] Mind a 9 oldal elérhető, a haladásjelző töltődik
-- [ ] A vissza gomb minden oldalon működik — **kivéve** az „elemzés" oldalt
-- [ ] Kis kijelzőn (5") egyik oldal sem csordul túl
-- [ ] Kérdésre koppintva automatikusan tovább lép
-- [ ] Az „elemzés" animáció végigfut és magától továbbmegy
-- [ ] A paywall főcíme igazodik ahhoz, amit a „What should they feel" kérdésre válaszoltál
-- [ ] **Újratelepítés után nincs újra onboarding** (helyi flag)
-- [ ] Fiók linkelése után, másik eszközön sincs újra (szerver flag)
-
-### 12. Fizetés sandboxban
-
-Előbb hozz létre sandbox tesztfiókot (App Store Connect → Users and Access →
-Sandbox Testers; Play Console → License testing).
-
-- [ ] Havi előfizetés → **10 drop néhány másodpercen belül**
-- [ ] A kiválasztott csomag az, amit ténylegesen megterhelnek (havi ≠ éves!)
-- [ ] Drop csomag vásárlása → az egyenleg nő
-- [ ] „Restore purchases" visszaállítja az előfizetést
-- [ ] Vásárlás megszakítása nem dob hibaüzenetet
-- [ ] Repülőgép módban indítva az előfizető nem látszik lejártnak
-
-### 13. Fiókkezelés
-
-- [ ] Kijelentkezés → friss anonim fiók, az app nem akad meg
-- [ ] Google/Apple linkelés → az eszközön lévő emlékek átjönnek
-- [ ] Fióktörlés → minden eltűnik, az app használható marad
-- [ ] Ha a merge elbukik, a Beállításokban megjelenik az „Emlékek
-      áthelyezésének újrapróbálása" sor
-
-### 14. Drop kvóta
-
-- [ ] Az ingyen drop dátumválasztója **nem enged 2 hónapnál távolabbra**
-- [ ] Elfogyott egyenlegnél a Seal a paywallra visz
-- [ ] Elakadt feltöltés eldobása visszaadja a dropot
-- [ ] Vásárolt droppal 2 hónapnál távolabbra is lehet küldeni
-
-### 15. Review-belépés
-
-- [ ] 10 koppintás a paywall címére megnyitja a jelszó ablakot
-- [ ] 9 koppintás nem, és lassú koppintás nullázza a számlálót
-- [ ] Helyes jelszó után korlátlanul lehet dropot létrehozni
-
-### 16. A kiadás előtti auditból származó javítások
-
-- [ ] **Beállítások → Drops panel**: az egyenleg bontása (ingyen / előfizetési /
-      vásárolt) a valós számokat mutatja, és a „következő nullázás" dátuma stimmel
-- [ ] **Restore purchases a Beállításokban** lefut, és nem hagy akadt állapotot
-      (ezt a store reviewer is meg fogja nyomni)
-- [ ] **Manage subscription** megnyitja a store előfizetéskezelőjét
-- [ ] **Egyenleg-chip a Home-on** a valós számot mutatja; drop létrehozása
-      után azonnal csökken; 0-nál piros
-- [ ] **Megőrzés nem-előfizetőként**: a modal *azonnal* kimondja, hogy ez Pro
-      funkció (nem a fiók-linkelés után!), a „See plans" a paywallra visz, és
-      onnan visszajutva nem ragadsz képernyőn
-- [ ] **Ingyen drop elköltése után** a dátumválasztó már **nem** korlátoz
-      2 hónapra (fizetett droppal bármeddig lehet küldeni)
-- [ ] **Csonka megosztási link** beillesztésekor világos üzenet jön
-      („This share link looks incomplete"), nem pedig „a kulcs sérült"
-- [ ] **Radar**: egy még feltöltés alatt álló drop megnyitásakor a radar
-      percekig pollozhat anélkül, hogy sebességkorlátba ütközne
-
-### 17. Az újraépített címzetti folyamat
-
-Ez a rész **csak eszközön ellenőrizhető**, és ez az egyetlen olyan
-funkcióegység, aminek a lényegét nem tudtam leszimulálni.
-
-**Deep link (a 6–8. pont után!)**
-
-- [ ] WhatsAppból kapott linkre koppintva **az app nyílik meg, nem a böngésző**
-      — Androidon és iOS-en külön
-- [ ] Hidegindítás (app teljesen bezárva) és melegindítás (háttérben) is működik
-- [ ] Ugyanarra a linkre **másodszor koppintva is megnyílik** (a korábbi
-      „egyszer már megmutattuk" logika megszűnt)
-- [ ] **Androidon megérkezik-e a `#` utáni kulcs.** Ha nem, a tartalék ág lép
-      életbe: „Ez az emlék hozzád tartozik, de a megnyitásához a teljes link
-      kell" + beillesztő mező. Helyes shareId esetén ez kinyitja a dropot,
-      eltérő linkre viszont hibát ad.
-- [ ] Az app **nem olvassa többé a vágólapot** magától (a Redeem lap
-      előkitöltése megmaradt — az szándékos, felhasználó által kezdeményezett)
-
-**Makró térkép és mikró radar**
-
-- [ ] Több kilométerről indítva **utcatérkép** látszik a céllal és a saját
-      pozícióval
-- [ ] A **„Get Directions"** megnyitja a natív térképet (iOS: Apple Maps,
-      Android: alapértelmezett; ha nincs, Google Maps a böngészőben)
-- [ ] **50 m alatt** átvált a radarra, és ezzel egyszerre indul a haptikus
-      lüktetés
-- [ ] A határ körül sétálva **nem villog oda-vissza** (visszaváltás csak 65 m
-      fölött)
-- [ ] Ha az idő még nem telt le, de odaértél: térkép + visszaszámláló látszik
-
-**A felnyitás**
-
-- [ ] Fekete felvezetés: „Recorded" + dátum + „x hónapja" **egyszerre** jelenik
-      meg
-- [ ] Utána **csak a kapszula** látszik, és megreped — ekkor még nincs szöveg
-- [ ] A repedés után **minden felirat egyszerre** úszik be („It's yours." +
-      hely + dátum + távolság)
-- [ ] A teljes szekvencia kb. **7 másodperc**, és utána azonnal indul a videó
-- [ ] Nincs többé külön fekete „pre-roll" a lejátszó előtt
-
-**A videó után**
-
-- [ ] A „Done" **nem dob fel fizetési falat**
-- [ ] Friss telepítésnél: onboarding → paywall → **Vault** (nem Home)
-- [ ] Már onboardolt felhasználónál: egyenesen a **Vault**
-- [ ] A Vault odagörget a friss emlékhez, ami **arany átsuhanást** és egy finom
-      rezgést kap
-- [ ] Közvetlenül alatta a **„Keep this memory safe."** kártya, és ilyenkor az
-      oldal alján lévő banner **nem látszik**
-- [ ] A Vaultból újranézve *nincs* kiemelés és *nincs* átirányítás — a Back
-      egyszerűen visszavisz
+> ⚠️ **Új, és muszáj szerepelnie:** a feladó dropronként bekapcsolhatja a
+> „Openable with the code alone" opciót. Az ilyen dropoknál a kulcs a
+> szerverre kerül, tehát **azt az egy emléket a szolgáltatás vissza tudja
+> fejteni**. A tájékoztató nem állíthatja, hogy minden tartalom végponttól
+> végpontig titkosított — azt kell írni, hogy alapértelmezetten az, és a
+> feladó dropronként lemondhat róla. (Részletek: `0030` migráció fejléce.)
+>
+> A **vágólap-használatot** is érdemes említeni: az app az első indításkor
+> **egyetlen egyszer** megnézi a vágólapot, hogy a weboldalról érkező linket a
+> telepítés után át tudja venni. Ezt követően soha többé nem olvassa.
 
 ---
 
-## ℹ️ AMI MÁR KÉSZ — nincs vele teendőd
+## 🔵 A CÍMZETTI FOLYAMAT ÚJ RÉSZEI
 
-Csak hogy tudd, mire ne pazarolj időt:
+### 9. Weboldal újratelepítése
 
-**Adatbázis (9 migráció, mind alkalmazva)**
-`0019` merge grantok + audit · `0020` drop ledger + szerveroldali kvóta ·
-`0021` review-belépés · `0022` RevenueCat termékek + webhook ·
-`0023` merge idempotencia · `0024` megőrzési szabály · `0025` takarítás ·
-`0026` megosztási kód sebességkorlátozása ·
-`0028` `radar_switch_meters` (a térkép/radar váltás szerverről hangolható)
+A `web/` átállt az új rendszerre, tehát **újra kell deployolni**, különben a
+weboldal még a régi „Copy link" folyamatot mutatja, amit az app már nem kezel.
 
-**Edge Functions (mind telepítve)**
-`merge-anonymous-account` · `delete-user-account` · `revenuecat-webhook` ·
-`purge-expired-capsules`
+Ami változott:
 
-**Ütemezett feladat**
-`free-capsule-purge` — naponta 03:17 UTC, aktív
+- **„Open in TimeDrop"** gomb — a `timedrop://` sémán adja át a dropot a
+  telepített appnak, a kulccsal együtt. Erre azért van szükség, mert a
+  böngésző már ezen a domainen áll, és egy ugyanoda mutató link **nem**
+  aktiválja újra az App/Universal Link kezelést.
+- **„Don't have the app? Get it"** — a teljes linket a vágólapra teszi, majd a
+  store-ba visz. Az app az **első indításkor, életében egyszer** megnézi a
+  vágólapot, és ha TimeDrop linket talál, azzal nyit.
+- A **6 karakteres kód** nagyban, koppintásra másolható.
+- A Play Store link javítva: `com.timedrop.app` → `com.timedrop.timedrop_mobile`
+  (a régi minden Android címzettet 404-re vitt).
 
-**RevenueCat** (`proj0b348db1`)
-2 app · 16 termék regisztrálva (14 sajátunk + 2 Test Store) · `pro`
-entitlement · `default` + `packs` offering · webhook integráció beállítva,
-titok a helyén
+### 10. Store-azonosítók a weboldalon
 
-**Titkok beállítva**
-`REVENUECAT_WEBHOOK_SECRET` · `PURGE_JOB_SECRET` · `reviewer_passcode_salt`
+`web/src/utils/osDetector.js`:
 
-**Szerveroldalon letesztelve**
-IDOR-védelem · kvóta-kikényszerítés · éves ciklus havi osztása · webhook
-idempotencia · merge idempotencia · rate limit · megőrzési szabály
-
----
-
-## 📌 Megjegyzések, amikről tudnod érdemes
-
-**A meglévő 22 kapszulát a takarító job soha nem törli.** Nincs
-`funding_bucket`-jük (a mező most született), és visszamenőleg nem tudjuk,
-melyik volt ingyenes. Ez tudatos óvatosság.
-
-**Az előfizetés nem hozzáférési kapu.** Aki nem fizet, továbbra is használja
-az appot — csak a havi 10 drop és a „Megőrzés" funkció köthető előfizetéshez.
-
-**A Test Store termékek (`monthly`, `yearly`) rajta vannak a `pro`
-entitlementen.** Ez azért kell, hogy sandboxban tudj tesztelni, mielőtt a
-store termékek léteznének. Éles kiadás előtt eltávolíthatod őket, ha zavar —
-de kockázat nincs, a Test Store csak debug módban él.
-
-**A megosztási kódok próbálgatása korlátozva van.** Felhasználónként 20
-*sikertelen* keresés óránként. Szándékosan csak a sikertelenek számítanak: a
-radar 3 másodpercenként pollozza ugyanezt a végpontot egy még feltöltés alatt
-álló dropnál, tehát egy összesített limit azonnal eltörné az appot. A határ a
-`system_settings.share_lookup_miss_hourly_limit` kulcsból hangolható.
-
-Őszintén a korlátjáról: a regisztráció nyitott, tehát egy elszánt támadó
-anonim fiókokat forgatva nullázhatja a saját számlálóját. Ez megdrágítja a
-támadást (fiókonként egy regisztráció 20 tippenként, a Supabase saját IP-alapú
-korlátai mellett), de nem teszi lehetetlenné. Ennél erősebbhez él-oldali,
-IP-alapú korlátozás kellene.
-
-**A címzetti folyamat újraépült (`fejlesztes.md` v3.0).** A vágólap-figyelés
-megszűnt, a navigáció makró térképre + mikró radarra bomlott, a felnyítási
-szertartás 14,6 mp-ről ~7,2 mp-re rövidült (a külön pre-roll beleolvadt), és a
-videó utáni fizetési fal helyét a Vault vette át. Ami ebből **nem működik
-automatikusan**: a deep link, amíg a 6–8. pont nincs kész — addig a link a
-böngészőben nyílik, és onnan nem vezet vissza az appba.
-
-**A `radar_switch_meters` szerverről hangolható.** Ha 50 m túl korainak vagy
-túl késeinek bizonyul terepen, nem kell app-frissítés:
-
-```sql
-update public.system_settings set value = 65 where key = 'radar_switch_meters';
+```js
+export const APP_STORE_URL = 'https://apps.apple.com/app/timedrop/id0000000000';
 ```
 
-A hiszterézis automatikusan követi (visszaváltás mindig az érték 1,3-szorosánál).
+Az `id0000000000` **helyőrző**. Amint létrejön az App Store Connect
+app-rekord, írd át a valódi Apple ID-ra, különben az iOS-es „Get it" gomb
+404-re visz. A Play-oldali link már helyes.
 
-**Nem commitoltam semmit.** A módosítások a working tree-ben vannak.
+> Az iOS `timedrop://` séma az `Info.plist`-ben már be van állítva
+> (`CFBundleURLTypes`), külön Apple-oldali engedélyt nem igényel — az
+> Associated Domains capability viszont igen, lásd a 6. pontot.

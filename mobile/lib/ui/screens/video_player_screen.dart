@@ -15,13 +15,15 @@ import '../../providers/vault_provider.dart';
 import '../../services/supabase_service.dart';
 import '../router/app_router.dart';
 import '../widgets/app_snackbar.dart';
+import '../widgets/memory/keepsake_card.dart';
 import '../widgets/primary_button.dart';
 import '../widgets/video/handwritten_note_overlay.dart';
 import '../widgets/watermark_stamp.dart';
 
 /// Plays the decrypted capsule media once unlocked. Shows the sender's note
 /// as an elegant fading overlay, then — after the video ends — lets the
-/// recipient swipe through any attached photos. "Done" hands them over to the
+/// recipient swipe through any attached photos and, last, back to the
+/// keepsake card they earned by going there. "Done" hands them over to the
 /// Vault.
 class VideoPlayerScreen extends StatefulWidget {
   const VideoPlayerScreen({
@@ -34,6 +36,7 @@ class VideoPlayerScreen extends StatefulWidget {
     this.capsuleId,
     this.latitude,
     this.longitude,
+    this.facts,
   });
 
   final Uint8List mediaBytes;
@@ -48,6 +51,11 @@ class VideoPlayerScreen extends StatefulWidget {
   /// during recording is rendered as an overlay on the playing video.
   final double? latitude;
   final double? longitude;
+
+  /// Where, when and how close — the card shown at the end of the unlock.
+  /// Given here so the same card stays swipeable after the video and photos,
+  /// on this viewing and on every later replay.
+  final MemoryFacts? facts;
 
   @override
   State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
@@ -186,6 +194,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       await SupabaseService.markReceivedCapsuleViewed(
         userId: userId,
         capsuleId: widget.capsuleId!,
+        // Only known on the unlock itself. Written down now because the
+        // keepsake card has to be able to say it again years later, and the
+        // radar's reading is gone the moment this screen appears.
+        unlockDistanceMeters: widget.facts?.distanceMeters,
       );
     } catch (_) {
       // Non-fatal for playback.
@@ -255,6 +267,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                                 capturedAt: widget.capturedAt,
                                 latitude: widget.latitude,
                                 longitude: widget.longitude,
+                                facts: widget.facts,
                               )
                             : _VideoStage(
                                 controller: controller,
@@ -348,6 +361,7 @@ class _UnifiedGallery extends StatefulWidget {
     required this.capturedAt,
     required this.latitude,
     required this.longitude,
+    required this.facts,
   });
 
   final VideoPlayerController controller;
@@ -356,6 +370,9 @@ class _UnifiedGallery extends StatefulWidget {
   final DateTime? capturedAt;
   final double? latitude;
   final double? longitude;
+
+  /// When present, the keepsake card becomes the last page.
+  final MemoryFacts? facts;
 
   @override
   State<_UnifiedGallery> createState() => _UnifiedGalleryState();
@@ -381,7 +398,13 @@ class _UnifiedGalleryState extends State<_UnifiedGallery> {
 
   @override
   Widget build(BuildContext context) {
-    final totalPages = 1 + widget.photos.length;
+    final facts = widget.facts;
+    // Video, then every photo, then — last — the keepsake card. It goes at the
+    // end because that is where it was earned: after everything the sender
+    // left, the record of the recipient having gone and stood there.
+    final keepsakeIndex = facts == null ? -1 : 1 + widget.photos.length;
+    final totalPages = 1 + widget.photos.length + (facts == null ? 0 : 1);
+
     return Stack(
       alignment: Alignment.bottomCenter,
       children: [
@@ -398,6 +421,9 @@ class _UnifiedGalleryState extends State<_UnifiedGallery> {
                 latitude: widget.latitude,
                 longitude: widget.longitude,
               );
+            }
+            if (i == keepsakeIndex) {
+              return KeepsakeCard(facts: facts!);
             }
             return Stack(
               fit: StackFit.expand,

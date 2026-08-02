@@ -1,6 +1,12 @@
+// TODO(release): replace the App Store id — it is a placeholder and the link
+// 404s until the app record exists in App Store Connect. See teendo.md.
 export const APP_STORE_URL = 'https://apps.apple.com/app/timedrop/id0000000000';
+
+// Must match `applicationId` in mobile/android/app/build.gradle.kts. It used
+// to read com.timedrop.app, which is not this app and never was — the button
+// sent every Android recipient to a Play Store 404.
 export const PLAY_STORE_URL =
-  'https://play.google.com/store/apps/details?id=com.timedrop.app';
+  'https://play.google.com/store/apps/details?id=com.timedrop.timedrop_mobile';
 
 export function detectOS() {
   const ua = window.navigator.userAgent || '';

@@ -75,9 +75,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     if (widget.isOnboarding) {
       Navigator.pushAndRemoveUntil(
         context,
-        SpringPageRoute(
-          page: HomeScreen(openVaultOnStart: widget.landOnVault),
-        ),
+        SpringPageRoute(page: HomeScreen(openVaultOnStart: widget.landOnVault)),
         (route) => false,
       );
     } else {
@@ -92,7 +90,10 @@ class _PaywallScreenState extends State<PaywallScreen> {
       final drops = context.read<DropBalanceProvider>();
       final bought = await payment.purchaseSubscription(drops);
       if (!mounted || !bought) return;
-      AppSnackbar.showSuccess(context, 'You\'re subscribed — 10 drops a month.');
+      AppSnackbar.showSuccess(
+        context,
+        'You\'re subscribed — 10 drops a month.',
+      );
       _leaveAfterUnlock();
     } catch (e) {
       if (mounted) AppSnackbar.showError(context, e);
@@ -155,10 +156,61 @@ class _PaywallScreenState extends State<PaywallScreen> {
     );
   }
 
+  /// The pack tiles, from the store when it has answered and from the local
+  /// catalogue when it has not.
+  ///
+  /// A tile with no store package behind it is shown but not tappable: there
+  /// is genuinely nothing to buy yet, and a button that opens a store error is
+  /// worse than one that plainly says "not available".
+  List<Widget> _buildPackTiles(PaymentProvider payment) {
+    final packages = payment.packPackages;
+    if (packages.isNotEmpty) {
+      return [
+        for (final pack in packages) ...[
+          _PackTile(
+            count: RevenueCatConstants.dropsForPackage(pack.identifier),
+            price: pack.storeProduct.priceString,
+            isBusy: _purchasingPackId == pack.identifier,
+            onTap: _purchasingPackId == null ? () => _purchasePack(pack) : null,
+          ),
+          const SizedBox(height: AppSpacing.xs),
+        ],
+      ];
+    }
+
+    return [
+      for (final count in RevenueCatConstants.packDropCountsInOrder) ...[
+        _PackTile(
+          count: count,
+          price: RevenueCatConstants.placeholderPackPrices[count] ?? '—',
+          isBusy: false,
+          onTap: null,
+          isUnavailable: true,
+        ),
+        const SizedBox(height: AppSpacing.xs),
+      ],
+      const SizedBox(height: AppSpacing.xs),
+      Text(
+        payment.isLoadingOfferings
+            ? 'Loading prices…'
+            : 'Drop packs are not available on this device yet.',
+        textAlign: TextAlign.center,
+        style: AppTypography.labelSm.copyWith(
+          color: AppColors.onSurfaceVariant,
+        ),
+      ),
+    ];
+  }
+
   Future<void> _openLink(String url) async {
     try {
-      final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-      if (!ok && mounted) AppSnackbar.showMessage(context, 'Could not open the link.');
+      final ok = await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!ok && mounted) {
+        AppSnackbar.showMessage(context, 'Could not open the link.');
+      }
     } catch (e) {
       if (mounted) AppSnackbar.showError(context, e);
     }
@@ -186,7 +238,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
           _PaywallHero(headline: widget.headline),
 
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.containerMargin),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.containerMargin,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -235,31 +289,29 @@ class _PaywallScreenState extends State<PaywallScreen> {
                 const SizedBox(height: AppSpacing.lg),
 
                 // ── CTA ───────────────────────────────────────────────────────
-                PrimaryButton(label: 'Subscribe', isLoading: _isPurchasing, onPressed: _purchase),
+                PrimaryButton(
+                  label: 'Subscribe',
+                  isLoading: _isPurchasing,
+                  onPressed: _purchase,
+                ),
 
                 // ── One-off drop packs ────────────────────────────────────────
-                if (payment.packPackages.isNotEmpty) ...[
-                  const SizedBox(height: AppSpacing.lg),
-                  Text('Just need a few?', style: AppTypography.headlineMd),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    'One-off drops. They never expire.',
-                    style: AppTypography.labelSm
-                        .copyWith(color: AppColors.onSurfaceVariant),
+                // Always rendered, exactly like the subscription cards above.
+                // The section used to disappear whenever the store returned
+                // nothing (mock mode, products not created yet, offline),
+                // which made buying individual drops look like it did not
+                // exist at all.
+                const SizedBox(height: AppSpacing.lg),
+                Text('Just need a few?', style: AppTypography.headlineMd),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'One-off drops. They never expire.',
+                  style: AppTypography.labelSm.copyWith(
+                    color: AppColors.onSurfaceVariant,
                   ),
-                  const SizedBox(height: AppSpacing.sm),
-                  for (final pack in payment.packPackages) ...[
-                    _PackTile(
-                      count: RevenueCatConstants.dropsForPackage(pack.identifier),
-                      price: pack.storeProduct.priceString,
-                      isBusy: _purchasingPackId == pack.identifier,
-                      onTap: _purchasingPackId == null
-                          ? () => _purchasePack(pack)
-                          : null,
-                    ),
-                    const SizedBox(height: AppSpacing.xs),
-                  ],
-                ],
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                ..._buildPackTiles(payment),
                 if (widget.isOnboarding) ...[
                   const SizedBox(height: AppSpacing.sm),
                   OutlinedButton(
@@ -276,7 +328,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
                 const SizedBox(height: AppSpacing.sm),
                 TextButton(
                   onPressed: _isRestoring ? null : _restore,
-                  child: Text(_isRestoring ? 'Restoring…' : 'Restore Purchases'),
+                  child: Text(
+                    _isRestoring ? 'Restoring…' : 'Restore Purchases',
+                  ),
                 ),
 
                 const SizedBox(height: AppSpacing.lg),
@@ -329,13 +383,17 @@ class _DropBalanceLine extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.confirmation_number_outlined,
-              size: 16, color: AppColors.onSecondaryContainer),
+          const Icon(
+            Icons.confirmation_number_outlined,
+            size: 16,
+            color: AppColors.onSecondaryContainer,
+          ),
           const SizedBox(width: AppSpacing.xs),
           Text(
             text,
-            style: AppTypography.labelSm
-                .copyWith(color: AppColors.onSecondaryContainer),
+            style: AppTypography.labelSm.copyWith(
+              color: AppColors.onSecondaryContainer,
+            ),
           ),
         ],
       ),
@@ -350,6 +408,7 @@ class _PackTile extends StatelessWidget {
     required this.price,
     required this.isBusy,
     required this.onTap,
+    this.isUnavailable = false,
   });
 
   final int? count;
@@ -357,40 +416,51 @@ class _PackTile extends StatelessWidget {
   final bool isBusy;
   final VoidCallback? onTap;
 
+  /// Rendered dimmed: the pack exists in the catalogue, but the store has no
+  /// product behind it on this device yet.
+  final bool isUnavailable;
+
   @override
   Widget build(BuildContext context) {
     final label = count == null
         ? 'Drops'
         : '$count drop${count == 1 ? '' : 's'}';
-    return InkWell(
-      borderRadius: AppRadii.mdRadius,
-      onTap: isBusy ? null : onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.sm,
-        ),
-        decoration: BoxDecoration(
-          color: AppColors.surfaceContainerLowest,
-          borderRadius: AppRadii.mdRadius,
-          border: Border.all(color: AppColors.outlineVariant),
-        ),
-        child: Row(
-          children: [
-            Expanded(child: Text(label, style: AppTypography.labelMd)),
-            if (isBusy)
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: AppColors.primary),
-              )
-            else
-              Text(
-                price,
-                style: AppTypography.labelMd.copyWith(color: AppColors.primary),
-              ),
-          ],
+    return Opacity(
+      opacity: isUnavailable ? 0.55 : 1,
+      child: InkWell(
+        borderRadius: AppRadii.mdRadius,
+        onTap: isBusy ? null : onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.sm,
+          ),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceContainerLowest,
+            borderRadius: AppRadii.mdRadius,
+            border: Border.all(color: AppColors.outlineVariant),
+          ),
+          child: Row(
+            children: [
+              Expanded(child: Text(label, style: AppTypography.labelMd)),
+              if (isBusy)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.primary,
+                  ),
+                )
+              else
+                Text(
+                  price,
+                  style: AppTypography.labelMd.copyWith(
+                    color: AppColors.primary,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -417,10 +487,7 @@ class _PaywallHero extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            AppColors.primary,
-            AppColors.secondaryContainer,
-          ],
+          colors: [AppColors.primary, AppColors.secondaryContainer],
         ),
       ),
       child: Column(
@@ -435,33 +502,39 @@ class _PaywallHero extends StatelessWidget {
               height: 56,
               fit: BoxFit.cover,
             ),
-          )
-              .animate()
-              .scale(begin: const Offset(0.7, 0.7), duration: 500.ms, curve: Curves.easeOutBack),
+          ).animate().scale(
+            begin: const Offset(0.7, 0.7),
+            duration: 500.ms,
+            curve: Curves.easeOutBack,
+          ),
           const SizedBox(height: AppSpacing.md),
           // Ten rapid taps here open the store-reviewer passcode sheet. It is
           // the only entry point, and it looks and behaves like plain text to
           // everyone else.
           HiddenReviewerTrigger(
-            child: Text(
-              headline ?? 'Seal memories\nfor the ones\nyou love.',
-              style: AppTypography.headlineLg.copyWith(
-                color: Colors.white,
-                fontSize: 30,
-                height: 1.25,
-              ),
-            )
-                .animate()
-                .fadeIn(duration: 500.ms, delay: 120.ms)
-                .slideY(begin: 0.1, end: 0, duration: 500.ms, delay: 120.ms),
+            child:
+                Text(
+                      headline ?? 'Seal memories\nfor the ones\nyou love.',
+                      style: AppTypography.headlineLg.copyWith(
+                        color: Colors.white,
+                        fontSize: 30,
+                        height: 1.25,
+                      ),
+                    )
+                    .animate()
+                    .fadeIn(duration: 500.ms, delay: 120.ms)
+                    .slideY(
+                      begin: 0.1,
+                      end: 0,
+                      duration: 500.ms,
+                      delay: 120.ms,
+                    ),
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(
             'Your moments, encrypted and waiting for the perfect moment to bloom.',
             style: AppTypography.bodyMd.copyWith(color: Colors.white70),
-          )
-              .animate()
-              .fadeIn(duration: 500.ms, delay: 240.ms),
+          ).animate().fadeIn(duration: 500.ms, delay: 240.ms),
         ],
       ),
     );
@@ -494,7 +567,9 @@ class _PlanCard extends StatelessWidget {
         child: Row(
           children: [
             Icon(
-              selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
               color: selected ? AppColors.primary : AppColors.outline,
             ),
             const SizedBox(width: AppSpacing.sm),
@@ -507,14 +582,19 @@ class _PlanCard extends StatelessWidget {
                   if (badge != null) ...[
                     const SizedBox(height: 2),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.sm,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: AppColors.primary,
                         borderRadius: BorderRadius.circular(AppRadii.full),
                       ),
                       child: Text(
                         badge!,
-                        style: AppTypography.labelSm.copyWith(color: AppColors.onPrimary),
+                        style: AppTypography.labelSm.copyWith(
+                          color: AppColors.onPrimary,
+                        ),
                       ),
                     ),
                   ],

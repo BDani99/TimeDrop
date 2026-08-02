@@ -49,6 +49,37 @@ void main() {
       expect(ShareLinkParser.parseParts('hello there'), isNull);
       expect(ShareLinkParser.parseParts(''), isNull);
     });
+
+    test('the web page\'s timedrop:// handoff URL round-trips', () {
+      // The custom scheme exists because a link to the domain the browser is
+      // already on cannot re-trigger Universal/App Link handling. If parsing
+      // it ever broke, the web page's "Open in TimeDrop" button would appear
+      // to work and silently do nothing.
+      final key = 'B' * 43;
+      final url = ShareLinkParser.buildAppSchemeUrl(
+        shareId: 'XYZ789',
+        encryptionKey: key,
+        fromName: 'Dani',
+      );
+
+      final result = ShareLinkParser.parseParts(url);
+      expect(result, isA<ShareLinkModel>());
+      final link = result as ShareLinkModel;
+      expect(link.shareId, 'XYZ789');
+      expect(link.encryptionKey, key);
+      expect(link.fromName, 'Dani');
+    });
+
+    test('a key-less timedrop:// link takes the incomplete branch too', () {
+      final result = ShareLinkParser.parseParts('timedrop://c/XYZ789');
+      expect(result, isA<IncompleteShareLink>());
+      expect((result as IncompleteShareLink).shareId, 'XYZ789');
+    });
+
+    test('another app\'s custom scheme is not accepted', () {
+      expect(ShareLinkParser.parseParts('notdrop://c/XYZ789#key'), isNull);
+      expect(ShareLinkParser.parseParts('timedrop://elsewhere/XYZ789'), isNull);
+    });
   });
 
   group('Macro/micro switch hysteresis', () {
@@ -103,8 +134,30 @@ void main() {
 
     test('the black intro is over before the capsule appears', () {
       expect(
-        UnlockTimeline.introOutEndMs,
+        UnlockTimeline.introEndMs,
         lessThanOrEqualTo(UnlockTimeline.capsuleStartMs),
+      );
+    });
+
+    test('the three intro lines never overlap', () {
+      // They are read one at a time, so each has to be gone before the next
+      // one starts — otherwise two lines share the frame and the whole
+      // deliberate pacing collapses.
+      final starts = UnlockTimeline.lineStartsMs;
+      for (var i = 1; i < starts.length; i++) {
+        expect(
+          starts[i],
+          greaterThanOrEqualTo(starts[i - 1] + UnlockTimeline.lineMs),
+          reason: 'line $i begins before line ${i - 1} has finished',
+        );
+      }
+    });
+
+    test('the last intro line has time to be read before the screen turns', () {
+      final lastStart = UnlockTimeline.lineStartsMs.last;
+      expect(
+        UnlockTimeline.introEndMs - lastStart,
+        greaterThanOrEqualTo(UnlockTimeline.lineFadeMs * 2),
       );
     });
 
@@ -112,7 +165,7 @@ void main() {
       // The whole point of the reordering: the crack is not sharing the frame
       // with text that arrived early.
       expect(
-        UnlockTimeline.textStartMs,
+        UnlockTimeline.factsStartMs,
         greaterThan(UnlockTimeline.crackEndMs),
       );
       expect(
@@ -121,9 +174,9 @@ void main() {
       );
     });
 
-    test('the lines are fully readable before the crossfade begins', () {
+    test('the facts are fully readable before the crossfade begins', () {
       expect(
-        UnlockTimeline.textEndMs,
+        UnlockTimeline.factsEndMs,
         lessThan(UnlockTimeline.fadeOutStartMs),
       );
     });
@@ -133,10 +186,10 @@ void main() {
       expect(UnlockTimeline.at(UnlockTimeline.totalMs), 1.0);
     });
 
-    test('the sequence stays under the eight seconds it was budgeted', () {
-      // It replaced a ~14.6 s two-part ritual; the ceiling is what keeps a
-      // future tweak from creeping back toward it.
-      expect(UnlockTimeline.totalMs, lessThanOrEqualTo(8000));
+    test('the sequence stays inside its twelve-second ceiling', () {
+      // It replaced a ~14.6 s ritual that played its two halves in the wrong
+      // order. The ceiling is what stops a future tweak creeping back to it.
+      expect(UnlockTimeline.totalMs, lessThanOrEqualTo(12000));
     });
   });
 }

@@ -69,8 +69,12 @@ class _SealRitualOverlayState extends State<SealRitualOverlay>
       builder: (context, _) {
         final t = _controller.value;
         final darken = Curves.easeInOut.transform((t / 0.25).clamp(0.0, 1.0));
+        // The cover photo does not merely get smaller — it is drawn all the
+        // way down into the seal, and is gone by the moment the lock shuts.
+        // Ending at half size (as it used to) left the picture sitting behind
+        // the lock, so nothing ever looked closed.
         final shrink = t >= 0.2
-            ? Curves.easeOutCubic.transform(((t - 0.2) / 0.3).clamp(0.0, 1.0))
+            ? Curves.easeInCubic.transform(((t - 0.2) / 0.52).clamp(0.0, 1.0))
             : 0.0;
         final goldSweep = t >= 0.45
             ? Curves.easeInOut.transform(((t - 0.45) / 0.28).clamp(0.0, 1.0))
@@ -92,18 +96,23 @@ class _SealRitualOverlayState extends State<SealRitualOverlay>
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      if (widget.previewImage != null)
-                        Transform.scale(
-                          scale: 1.0 - shrink * 0.5,
-                          child: Transform.rotate(
-                            angle: shrink * 0.06,
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(24),
-                              child: Image(
-                                image: widget.previewImage!,
-                                width: 180,
-                                height: 220,
-                                fit: BoxFit.cover,
+                      if (widget.previewImage != null && shrink < 1)
+                        Opacity(
+                          // Holds full strength through most of the descent,
+                          // then dissolves over the final stretch.
+                          opacity: (1.0 - shrink * 1.35).clamp(0.0, 1.0),
+                          child: Transform.scale(
+                            scale: 1.0 - shrink * 0.92,
+                            child: Transform.rotate(
+                              angle: shrink * 0.18,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(24),
+                                child: Image(
+                                  image: widget.previewImage!,
+                                  width: 180,
+                                  height: 220,
+                                  fit: BoxFit.cover,
+                                ),
                               ),
                             ),
                           ),
