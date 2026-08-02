@@ -17,6 +17,7 @@ import '../../providers/vault_provider.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/media_cache_service.dart';
 import '../widgets/app_snackbar.dart';
+import '../utils/scroll_pagination.dart';
 import '../widgets/loading/skeleton_box.dart';
 import '../widgets/memory/keepsake_card.dart';
 import '../widgets/vault/new_memory_highlight.dart';
@@ -42,7 +43,7 @@ class VaultScreen extends StatefulWidget {
   State<VaultScreen> createState() => _VaultScreenState();
 }
 
-class _VaultScreenState extends State<VaultScreen> {
+class _VaultScreenState extends State<VaultScreen> with ScrollPaginationMixin {
   VaultView _view = VaultView.timeline;
   String? _reopeningCapsuleId;
   bool _thumbnailsWarmed = false;
@@ -155,10 +156,30 @@ class _VaultScreenState extends State<VaultScreen> {
     }
   }
 
+  /// Pull-to-refresh: back to the first page, since the user is at the top
+  /// anyway and asked for a fresh look at the list.
+  Future<void> _refresh() async {
+    resetPagination();
+    await _load();
+  }
+
   /// Brings the just-opened memory into view. It sits under "Opened", which on
   /// a full vault can be well below the fold.
   void _scrollToHighlight() {
-    if (_highlightCapsuleId == null) return;
+    final id = _highlightCapsuleId;
+    if (id == null) return;
+
+    // The timeline builds a page at a time, and a card that has not been built
+    // has no context to scroll to. Grow the window far enough to include it
+    // before asking the framework to find it.
+    final vault = context.read<VaultProvider>();
+    final indexInOpened = vault.opened.indexWhere((c) => c.capsuleId == id);
+    if (indexInOpened >= 0) {
+      ensureVisibleIndex(
+        vault.ready.length + vault.waiting.length + indexInOpened,
+      );
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final target = _highlightKey.currentContext;
       if (!mounted || target == null) return;
@@ -368,13 +389,16 @@ class _VaultScreenState extends State<VaultScreen> {
                 _TimelineView(
                   vault: vault,
                   reopeningCapsuleId: _reopeningCapsuleId,
-                  onRefresh: _load,
+                  onRefresh: _refresh,
                   onOpenReceived: _openReceived,
                   onReopen: _reopen,
                   onOpenDetail: _openDetail,
                   previews: _previews,
                   highlightCapsuleId: _highlightCapsuleId,
                   highlightKey: _highlightKey,
+                  visibleCount: visibleCount,
+                  onScroll: (n, total) =>
+                      handleScrollForPagination(n, total),
                 ),
                 _MapView(
                   vault: vault,
@@ -437,6 +461,8 @@ class _TimelineView extends StatelessWidget {
     required this.previews,
     required this.highlightCapsuleId,
     required this.highlightKey,
+    required this.visibleCount,
+    required this.onScroll,
   });
 
   final VaultProvider vault;
@@ -452,6 +478,12 @@ class _TimelineView extends StatelessWidget {
   final String? highlightCapsuleId;
   final GlobalKey highlightKey;
 
+  /// How many memory cards may be built, across all three sections. Section
+  /// headers do not count against it — they are cheap, and a header with no
+  /// cards under it would look broken.
+  final int visibleCount;
+  final bool Function(ScrollNotification, int total) onScroll;
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
@@ -466,7 +498,27 @@ class _TimelineView extends StatelessWidget {
         highlighted != null &&
         vault.opened.any((c) => c.capsuleId == highlighted);
 
-    return RefreshIndicator(
+    // Sections draw from one shared budget, in the order they appear. Ready
+    // and Waiting are usually short; Opened is the one that grows without
+    // bound, so it is the one that ends up truncated — which is also the one
+    // the user is least likely to be scrolling for.
+    var budget = visibleCount;
+    List<ReceivedCapsuleModel> take(List<ReceivedCapsuleModel> src) {
+      if (budget <= 0) return const [];
+      final taken = src.take(budget).toList();
+      budget -= taken.length;
+      return taken;
+    }
+
+    final readyShown = take(vault.ready);
+    final waitingShown = take(vault.waiting);
+    final openedShown = take(vault.opened);
+    final total =
+        vault.ready.length + vault.waiting.length + vault.opened.length;
+
+    return NotificationListener<ScrollNotification>(
+      onNotification: (n) => onScroll(n, total),
+      child: RefreshIndicator(
       color: AppColors.primary,
       onRefresh: onRefresh,
       child: ListView(
@@ -482,9 +534,9 @@ class _TimelineView extends StatelessWidget {
           ],
           if (vault.isLoading && vault.receivedCapsules.isEmpty)
             const SkeletonMemoryCard(),
-          if (vault.ready.isNotEmpty) ...[
+          if (readyShown.isNotEmpty) ...[
             _SectionLabel('Ready to open'),
-            for (final item in vault.ready) ...[
+            for (final item in readyShown) ...[
               RepaintBoundary(
                 child: _ReadyCard(
                   item: item,
@@ -500,9 +552,9 @@ class _TimelineView extends StatelessWidget {
             ],
             const SizedBox(height: AppSpacing.md),
           ],
-          if (vault.waiting.isNotEmpty) ...[
+          if (waitingShown.isNotEmpty) ...[
             _SectionLabel('Waiting'),
-            for (final item in vault.waiting) ...[
+            for (final item in waitingShown) ...[
               _WaitingCard(
                 item: item,
                 // Waiting + key → gift intro (countdown). Ready uses radar.
@@ -512,9 +564,9 @@ class _TimelineView extends StatelessWidget {
             ],
             const SizedBox(height: AppSpacing.md),
           ],
-          if (vault.opened.isNotEmpty) ...[
+          if (openedShown.isNotEmpty) ...[
             _SectionLabel('Opened'),
-            for (final item in vault.opened) ...[
+            for (final item in openedShown) ...[
               RepaintBoundary(
                 child: KeyedSubtree(
                   key: item.capsuleId == highlighted ? highlightKey : null,
@@ -559,6 +611,7 @@ class _TimelineView extends StatelessWidget {
             const _FreemiumBanner(),
           ],
         ],
+      ),
       ),
     );
   }

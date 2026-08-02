@@ -16,6 +16,7 @@ import '../../providers/settings_provider.dart';
 import '../../providers/vault_provider.dart';
 import '../../services/geocoding_service.dart';
 import '../../services/supabase_service.dart';
+import '../utils/scroll_pagination.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/drop_balance_chip.dart';
 import '../widgets/glass/glass_panel.dart';
@@ -44,7 +45,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with ScrollPaginationMixin {
   bool _isLoading = true;
   List<CapsuleModel> _capsules = const [];
   bool _showEarlier = false;
@@ -79,6 +80,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _onScrollEnd(ScrollEndNotification notification) {
     if (_snapping || !_scrollController.hasClients) return false;
+    // Note: this fires on scroll END only, so it is the header snap's home.
+    // Pagination has its own listener on every ScrollNotification — waiting
+    // for the scroll to stop before building the next page would show the
+    // user the bottom of the list before its contents.
     // Only snap the collapsing header range — not the whole list.
     if (notification.depth != 0) return false;
     final offset = _scrollController.offset;
@@ -123,6 +128,14 @@ class _HomeScreenState extends State<HomeScreen> {
       _lastChangeTick = tick;
       _load();
     }
+  }
+
+  /// Pull-to-refresh. Distinct from [_load] because that also runs when a
+  /// background upload finishes — collapsing the list back to one page under
+  /// someone who has scrolled down would be its own small betrayal.
+  Future<void> _refresh() async {
+    resetPagination();
+    await _load();
   }
 
   Future<void> _load({bool silent = false}) async {
@@ -268,14 +281,30 @@ class _HomeScreenState extends State<HomeScreen> {
     final overflowActive = active.skip(_maxActiveVisible).toList();
     final archived = [...overflowActive, ...earlier];
 
+    // Which sections are on screen at all is unchanged: earlier drops hide
+    // behind the toggle while anything is still active, and show outright
+    // when nothing is. What is new is that the visible ones are built a page
+    // at a time instead of all at once.
+    final earlierExpanded = _showEarlier || visibleActive.isEmpty;
+    final renderableCount =
+        visibleActive.length + (earlierExpanded ? archived.length : 0);
+    final activeShown = visibleActive.take(visibleOf(visibleActive.length));
+    final archivedBudget = visibleCount - activeShown.length;
+    final archivedShown = earlierExpanded && archivedBudget > 0
+        ? archived.take(archivedBudget)
+        : const <CapsuleModel>[];
+
     return Scaffold(
       backgroundColor: AppColors.surface,
       body: SafeArea(
-        child: NotificationListener<ScrollEndNotification>(
+        child: NotificationListener<ScrollNotification>(
+          onNotification: (n) =>
+              handleScrollForPagination(n, renderableCount),
+          child: NotificationListener<ScrollEndNotification>(
           onNotification: _onScrollEnd,
           child: RefreshIndicator(
             color: AppColors.primary,
-            onRefresh: _load,
+            onRefresh: _refresh,
             child: CustomScrollView(
               controller: _scrollController,
               physics: const AlwaysScrollableScrollPhysics(
@@ -363,55 +392,42 @@ class _HomeScreenState extends State<HomeScreen> {
                                 EdgeInsets.symmetric(vertical: AppSpacing.lg),
                             child: _EmptyState(),
                           ),
-                        for (final capsule in visibleActive) ...[
+                        for (final capsule in activeShown) ...[
                           _memoryCard(capsule),
                           const SizedBox(height: AppSpacing.sm),
                         ],
                         if (archived.isNotEmpty) ...[
                           const SizedBox(height: AppSpacing.sm),
-                          Builder(
-                            builder: (context) {
-                              final expanded =
-                                  _showEarlier || visibleActive.isEmpty;
-                              return Column(
+                          if (visibleActive.isNotEmpty)
+                            TextButton(
+                              onPressed: () => setState(
+                                () => _showEarlier = !_showEarlier,
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  if (visibleActive.isNotEmpty)
-                                    TextButton(
-                                      onPressed: () => setState(
-                                        () => _showEarlier = !_showEarlier,
-                                      ),
-                                      child: Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          Text(
-                                            expanded
-                                                ? 'Hide earlier drops'
-                                                : 'Earlier drops (${archived.length})',
-                                            style: AppTypography.labelMd
-                                                .copyWith(
-                                              color: AppColors.primary,
-                                            ),
-                                          ),
-                                          Icon(
-                                            expanded
-                                                ? Icons.expand_less
-                                                : Icons.expand_more,
-                                            color: AppColors.primary,
-                                            size: 20,
-                                          ),
-                                        ],
-                                      ),
+                                  Text(
+                                    earlierExpanded
+                                        ? 'Hide earlier drops'
+                                        : 'Earlier drops (${archived.length})',
+                                    style: AppTypography.labelMd.copyWith(
+                                      color: AppColors.primary,
                                     ),
-                                  if (expanded)
-                                    for (final capsule in archived) ...[
-                                      _memoryCard(capsule),
-                                      const SizedBox(height: AppSpacing.sm),
-                                    ],
+                                  ),
+                                  Icon(
+                                    earlierExpanded
+                                        ? Icons.expand_less
+                                        : Icons.expand_more,
+                                    color: AppColors.primary,
+                                    size: 20,
+                                  ),
                                 ],
-                              );
-                            },
-                          ),
+                              ),
+                            ),
+                          for (final capsule in archivedShown) ...[
+                            _memoryCard(capsule),
+                            const SizedBox(height: AppSpacing.sm),
+                          ],
                         ],
                       ],
                     ]),
@@ -420,6 +436,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
+        ),
         ),
       ),
     );

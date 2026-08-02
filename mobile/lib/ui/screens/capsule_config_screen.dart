@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../core/errors/app_exception.dart';
@@ -22,6 +23,7 @@ import '../../providers/drop_balance_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../core/utils/date_format_helper.dart';
 import '../../services/geolocation_service.dart';
+import '../../services/photo_processing_service.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/loading/skeleton_box.dart';
 import '../widgets/glass/glass_bottom_sheet.dart';
@@ -75,6 +77,12 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
   /// for a code that works even when the link gets mangled.
   bool _allowCodeUnlock = false;
 
+  /// Width ÷ height of the recorded video. Photos are cropped to it so the
+  /// capsule reads as one piece when the recipient swipes from the clip into
+  /// the stills. Null until read (or if reading fails), in which case the
+  /// photo screens fall back to the viewport aspect they used before.
+  double? _videoAspect;
+
   @override
   void initState() {
     super.initState();
@@ -82,6 +90,23 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
       _loadLocation();
       _prefillName();
     });
+    unawaited(_readVideoAspect());
+  }
+
+  /// Reads the recorded clip's aspect ratio once, off the critical path — the
+  /// user can be choosing a date while this runs, and nothing waits on it.
+  Future<void> _readVideoAspect() async {
+    final controller = VideoPlayerController.file(File(widget.videoPath));
+    try {
+      await controller.initialize();
+      final aspect = controller.value.aspectRatio;
+      if (mounted && aspect > 0) setState(() => _videoAspect = aspect);
+    } catch (e) {
+      // Non-fatal: photos simply keep the previous viewport-based crop.
+      debugPrint('Could not read the video aspect ratio: $e');
+    } finally {
+      await controller.dispose();
+    }
   }
 
   @override
@@ -118,7 +143,9 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
     try {
       final processed = await Navigator.push<String>(
         context,
-        SpringPageRoute(page: const DropPhotoCameraScreen()),
+        SpringPageRoute(
+          page: DropPhotoCameraScreen(targetAspect: _videoAspect),
+        ),
       );
       if (processed == null || !mounted) return;
 
@@ -139,10 +166,30 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
       if (remaining <= 0) return;
       final picked = await ImagePicker().pickMultiImage(limit: remaining);
       if (picked.isEmpty || !mounted) return;
+
+      // Imports used to skip processing entirely and keep whatever shape the
+      // original had, so a capsule could hold a 16:9 video, a cropped camera
+      // photo and a 4:3 library photo. They go through the same crop now.
+      // Never mirrored: flipping somebody's existing photograph is wrong.
+      final aspect = _videoAspect;
+      final paths = <String>[];
+      for (final image in picked) {
+        paths.add(
+          aspect == null
+              ? image.path
+              : await PhotoProcessingService.processCameraCapture(
+                  sourcePath: image.path,
+                  mirror: false,
+                  targetAspectWidthOverHeight: aspect,
+                ),
+        );
+      }
+      if (!mounted) return;
+
       setState(() {
-        for (final image in picked) {
+        for (final path in paths) {
           if (_photoPaths.length < AppConstants.maxCapsulePhotos) {
-            _photoPaths.add(image.path);
+            _photoPaths.add(path);
           }
         }
         // Default the cover to the first photo once any exist.

@@ -1,6 +1,6 @@
 import AnimatedMapBackground from './components/AnimatedMapBackground';
 import LandingCard from './components/LandingCard';
-import FallbackCard from './components/FallbackCard';
+import LandingPage from './components/landing/LandingPage';
 import { parseCurrentLocation } from './utils/linkParser';
 
 // This is the entire zero-backend trust boundary: parse the URL client-side
@@ -15,18 +15,26 @@ import { parseCurrentLocation } from './utils/linkParser';
 function App() {
   const location = parseCurrentLocation();
 
-  return (
-    <div className="flex min-h-screen w-full flex-col items-center justify-center px-6 py-16">
-      <AnimatedMapBackground />
-      {location.isShareLink ? (
+  // Two different pages, and the difference is not cosmetic. A drop link gets
+  // one centred card and nothing to read past it. Everything else gets the
+  // scrolling product page.
+  if (location.isShareLink) {
+    return (
+      <div className="flex min-h-screen w-full flex-col items-center justify-center px-6 py-16">
+        <AnimatedMapBackground />
         <LandingCard
           shareId={location.shareId}
           fromName={location.fromName}
           encryptionKey={location.encryptionKey}
         />
-      ) : (
-        <FallbackCard />
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen w-full">
+      <AnimatedMapBackground />
+      <LandingPage />
     </div>
   );
 }

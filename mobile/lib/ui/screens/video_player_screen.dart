@@ -452,7 +452,14 @@ class _UnifiedGalleryState extends State<_UnifiedGallery> {
                     margin: const EdgeInsets.symmetric(horizontal: 3),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: i == _page ? AppColors.primary : Colors.white38,
+                      // The keepsake page is sand-coloured, every other page is
+                      // a photo or video on black. White dots would vanish on
+                      // the one page that has no image behind them.
+                      color: i == _page
+                          ? AppColors.primary
+                          : (_page == keepsakeIndex
+                              ? AppColors.onSurfaceVariant.withValues(alpha: 0.35)
+                              : Colors.white38),
                     ),
                   ),
               ],

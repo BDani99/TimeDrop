@@ -3,23 +3,28 @@ import 'dart:io';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
-/// Normalises camera captures before they are attached to a drop.
+/// Normalises photos before they are attached to a drop.
 ///
-/// Applies EXIF orientation, centre-crops to the on-screen viewport aspect
-/// (so the saved JPEG matches the live [BoxFit.cover] preview), and
+/// Applies EXIF orientation, centre-crops to a target aspect ratio, and
 /// optionally mirrors horizontally.
+///
+/// The target is the **video's** aspect ratio, not the phone screen's. A
+/// capsule is one memory: the recipient swipes from the video straight into
+/// the photos, and a still that is a different shape from the clip it belongs
+/// to reads as a mistake. This used to crop to the viewport, which matched the
+/// live preview but not the recording.
 class PhotoProcessingService {
   PhotoProcessingService._();
 
   /// Reads [sourcePath], normalises, and writes a new JPEG in temp storage.
-  /// Returns the output path (falls back to [sourcePath] if decode fails).
+  /// Returns the output path (falls back to [sourcePath] if decode fails) —
+  /// an unprocessable photo is still better than no photo.
   ///
-  /// [viewportAspectWidthOverHeight] should match the preview area width ÷
-  /// height (typically [MediaQuery.sizeOf(context).width / height]).
+  /// [targetAspectWidthOverHeight] is width ÷ height of the capsule's video.
   static Future<String> processCameraCapture({
     required String sourcePath,
     required bool mirror,
-    required double viewportAspectWidthOverHeight,
+    required double targetAspectWidthOverHeight,
   }) async {
     try {
       final raw = await File(sourcePath).readAsBytes();
@@ -27,7 +32,7 @@ class PhotoProcessingService {
       if (decoded == null) return sourcePath;
 
       var image = img.bakeOrientation(decoded);
-      image = _centerCropToAspect(image, viewportAspectWidthOverHeight);
+      image = _centerCropToAspect(image, targetAspectWidthOverHeight);
       if (mirror) {
         image = img.flipHorizontal(image);
       }

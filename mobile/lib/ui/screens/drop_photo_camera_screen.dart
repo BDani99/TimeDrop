@@ -22,7 +22,13 @@ import '../widgets/watermark_stamp.dart';
 ///
 /// Returns the processed JPEG path via [Navigator.pop], or null if cancelled.
 class DropPhotoCameraScreen extends StatelessWidget {
-  const DropPhotoCameraScreen({super.key});
+  const DropPhotoCameraScreen({super.key, this.targetAspect});
+
+  /// Width ÷ height the capture is cropped to — the capsule's video aspect,
+  /// so the photos and the clip are the same shape when the recipient swipes
+  /// between them. Null falls back to the screen's aspect, which is what this
+  /// screen used to do unconditionally.
+  final double? targetAspect;
 
   static Future<bool> _requestPermissions() async {
     final status = await Permission.camera.request();
@@ -36,7 +42,7 @@ class DropPhotoCameraScreen extends StatelessWidget {
       body: PermissionGate(
         requestPermission: _requestPermissions,
         deniedMessage: 'Camera access is required to take a photo.',
-        child: const _DropPhotoCameraBody(),
+        child: _DropPhotoCameraBody(targetAspect: targetAspect),
       ),
     );
   }
@@ -65,7 +71,9 @@ extension _FlashStateX on _FlashState {
 }
 
 class _DropPhotoCameraBody extends StatefulWidget {
-  const _DropPhotoCameraBody();
+  const _DropPhotoCameraBody({this.targetAspect});
+
+  final double? targetAspect;
 
   @override
   State<_DropPhotoCameraBody> createState() => _DropPhotoCameraBodyState();
@@ -238,7 +246,8 @@ class _DropPhotoCameraBodyState extends State<_DropPhotoCameraBody>
     final controller = _controller;
     if (controller == null || _isCapturing) return;
     final mirror = context.read<SettingsProvider>().mirrorDropPhotos;
-    final viewportAspect = _viewportAspect;
+    // The video's shape when we know it; the screen's only as a fallback.
+    final targetAspect = widget.targetAspect ?? _viewportAspect;
     setState(() => _isCapturing = true);
     try {
       await AppHaptics.medium();
@@ -246,7 +255,7 @@ class _DropPhotoCameraBodyState extends State<_DropPhotoCameraBody>
       final processed = await PhotoProcessingService.processCameraCapture(
         sourcePath: file.path,
         mirror: mirror,
-        viewportAspectWidthOverHeight: viewportAspect,
+        targetAspectWidthOverHeight: targetAspect,
       );
       if (!mounted) return;
       setState(() => _previewPath = processed);

@@ -4,6 +4,14 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
 
+/// The sand-coloured backdrop of the unlock ritual and the keepsake card.
+///
+/// One definition, because the card has to look identical on the day it is
+/// earned and on every replay years later — and because it was previously
+/// written out by hand in the unlock screen while the keepsake page inherited
+/// the player's black, which made the same card render two different ways.
+const Color kKeepsakeBackground = Color(0xFFF1E5D8);
+
 /// The facts of a received memory — where it was left, when it was recorded,
 /// how long it had been waiting, and how close the recipient was standing when
 /// it opened.
@@ -94,22 +102,19 @@ class MemoryFacts {
 /// The block of fact lines shown under the capsule. Static — the unlock
 /// sequence fades the whole thing in as one, and the keepsake page shows it
 /// outright.
+///
+/// Only one palette, deliberately: both places that draw it sit on
+/// [kKeepsakeBackground], and a second colour scheme is how the two copies
+/// drifted apart in the first place.
 class MemoryFactsBlock extends StatelessWidget {
-  const MemoryFactsBlock({
-    super.key,
-    required this.facts,
-    this.onSurface = false,
-  });
+  const MemoryFactsBlock({super.key, required this.facts});
 
   final MemoryFacts facts;
 
-  /// True on the black keepsake page, where the palette inverts.
-  final bool onSurface;
-
   @override
   Widget build(BuildContext context) {
-    final muted = onSurface ? Colors.white60 : AppColors.onSurfaceVariant;
-    final strong = onSurface ? Colors.white : AppColors.primary;
+    const muted = AppColors.onSurfaceVariant;
+    const strong = AppColors.primary;
     final sender = facts.sender;
 
     return Column(
@@ -180,9 +185,9 @@ class _FactLine extends StatelessWidget {
 /// by going there, kept with the memory and reachable forever after by swiping
 /// past the video and the photos.
 ///
-/// Rendered in its finished state: the animation belongs to the unlock, and
-/// happens once. Replaying it on every visit would turn a keepsake back into a
-/// performance.
+/// Rendered in its finished state, on the same sand background it appeared on
+/// during the unlock: the animation belongs to that moment and happens once,
+/// but the picture it left behind should not change afterwards.
 class KeepsakeCard extends StatelessWidget {
   const KeepsakeCard({super.key, required this.facts});
 
@@ -190,21 +195,24 @@ class KeepsakeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.lg,
-        vertical: AppSpacing.xl,
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const CustomPaint(
-            painter: CapsuleCrackPainter(crackProgress: 1),
-            size: Size(120, 156),
-          ),
-          const SizedBox(height: AppSpacing.xl),
-          MemoryFactsBlock(facts: facts, onSurface: true),
-        ],
+    return ColoredBox(
+      color: kKeepsakeBackground,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.xl,
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CustomPaint(
+              painter: CapsuleCrackPainter(crackProgress: 1),
+              size: Size(120, 156),
+            ),
+            const SizedBox(height: AppSpacing.xl),
+            MemoryFactsBlock(facts: facts),
+          ],
+        ),
       ),
     );
   }

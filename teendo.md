@@ -170,6 +170,11 @@ Mindkét store elutasítja a beküldést valódi tartalom nélkül. Az adatvéde
 tájékoztatóban ki kell térni: helyadat, kamera/mikrofon, végponttól végpontig
 titkosítás, fióktörlés, és az ingyen dropok 3 hónapos megőrzési ideje.
 
+> A megőrzési szabály **pontos** megfogalmazása: az ingyenes dropot a nyitás
+> után egy hónappal töröljük, **kivéve, ha a feladó valaha fizetett** (bármikori
+> előfizetés vagy drop csomag). Aki fizetett, annak az ingyenes dropjai is
+> megmaradnak, a lemondás után is.
+
 > ⚠️ **Új, és muszáj szerepelnie:** a feladó dropronként bekapcsolhatja a
 > „Openable with the code alone" opciót. Az ilyen dropoknál a kulcs a
 > szerverre kerül, tehát **azt az egy emléket a szolgáltatás vissza tudja
@@ -192,6 +197,11 @@ weboldal még a régi „Copy link" folyamatot mutatja, amit az app már nem kez
 
 Ami változott:
 
+- **A domain gyökere mostantól rendes landing page** — hero, „hogyan működik"
+  három lépésben, „miért más" három pontban, záró letöltő gombok, görgetésre
+  beúszó animációkkal. A korábbi két mondatos doboz megszűnt.
+- **A droplink oldal (`/c/{kód}`) szándékosan változatlan** — aki egy emléket
+  kapott, annak nem terméket kell mutatni.
 - **„Open in TimeDrop"** gomb — a `timedrop://` sémán adja át a dropot a
   telepített appnak, a kulccsal együtt. Erre azért van szükség, mert a
   böngésző már ezen a domainen áll, és egy ugyanoda mutató link **nem**
@@ -215,6 +225,23 @@ Az `id0000000000` **helyőrző**. Amint létrejön az App Store Connect
 app-rekord, írd át a valódi Apple ID-ra, különben az iOS-es „Get it" gomb
 404-re visz. A Play-oldali link már helyes.
 
+Ez a konstans **három helyen** látszik: a droplink oldal „Get it" gombján, a
+landing page hero-jában és a záró CTA-ban. Egy helyen kell átírni.
+
 > Az iOS `timedrop://` séma az `Info.plist`-ben már be van állítva
 > (`CFBundleURLTypes`), külön Apple-oldali engedélyt nem igényel — az
 > Associated Domains capability viszont igen, lásd a 6. pontot.
+
+### 11. Landing page szövegek átolvasása
+
+A landing page szövegeit én írtam, angolul, a termék tényleges viselkedése
+alapján. Három állítás szerepel benne, amit érdemes tudatosan jóváhagynod,
+mert marketing-ígéretként fognak működni:
+
+- *„We cannot watch it"* — alapértelmezetten igaz. A „kóddal is megnyitható"
+  opcióval viszont **nem**, és ezt a landing page nem árnyalja. Ha ez zavar,
+  vagy a szöveget kell finomítani, vagy a store-leírásban külön kitérni rá.
+- *„Your first drop is free"* — a `free_drop_limit` jelenleg **100**
+  (4. pont). Kiadás előtt 1-re kell állítani, különben a mondat nem igaz.
+- Az App Store / Play gombok **mindkét platformon látszanak**, eszköztől
+  függetlenül — asztali gépen ez a helyes, mobilon egy fölösleges gomb.

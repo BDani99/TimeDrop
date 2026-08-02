@@ -144,7 +144,9 @@ class _UnlockSequenceScreenState extends State<UnlockSequenceScreen>
   late final AnimationController _controller;
   bool _hapticFired = false;
 
-  static const _cream = Color(0xFFF1E5D8);
+  // Shared with the keepsake page, so the card the recipient keeps looks the
+  // same as the one they were just given.
+  static const _cream = kKeepsakeBackground;
 
   MemoryFacts get _facts => MemoryFacts(
         capturedAt: widget.capturedAt,
