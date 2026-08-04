@@ -5,7 +5,7 @@ Ez a lista azt tartalmazza, **amit neked kell elvégezned**. A kód, az adatbáz
 külső fiókot igényel (App Store Connect, Play Console), vagy tudatosan rád
 tartozó döntés, vagy fizikai eszközt kér.
 
-Utolsó frissítés: 2026-08-01
+Utolsó frissítés: 2026-08-03
 
 ---
 
@@ -65,18 +65,13 @@ Az app jelenleg **mock módban** van (nincs kulcs → nem lehet vásárolni).
 A kulcsok a RevenueCat → Project Settings → **SDK API keys** alatt vannak
 (ezek a publikus `appl_…` / `goog_…` kulcsok, nem a titkosak).
 
+Másold a `mobile/env.example.json`-t `env.json`-ra (gitignore-olva van), írd
+bele a két kulcsot, és:
+
 ```bash
-flutter build appbundle --release \
-  --dart-define=REVENUECAT_API_KEY_ANDROID=goog_XXXXXXXX \
-  --dart-define=REVENUECAT_API_KEY_IOS=appl_XXXXXXXX
-
-flutter build ipa --release \
-  --dart-define=REVENUECAT_API_KEY_IOS=appl_XXXXXXXX \
-  --dart-define=REVENUECAT_API_KEY_ANDROID=goog_XXXXXXXX
+flutter build appbundle --release --dart-define-from-file=env.json
+flutter build ipa       --release --dart-define-from-file=env.json
 ```
-
-> Érdemes ezeket egy `--dart-define-from-file=env.json` fájlba tenni és
-> gitignore-olni, hogy ne kelljen minden buildnél begépelni.
 
 ### 4. Ingyen drop limit visszaállítása 1-re
 
@@ -87,33 +82,34 @@ flutter build ipa --release \
 update public.system_settings set value = 1 where key = 'free_drop_limit';
 ```
 
-> Szándékosan nem állítottam át: ha most 1-re megy, a saját teszteszközöd
-> azonnal elakad. Kiadás előtt viszont kötelező.
+> Szándékosan nincs átállítva: ha most 1-re megy, a saját teszteszközöd azonnal
+> elakad. Kiadás előtt viszont kötelező — a landing page „Your first drop is
+> free" mondata is csak így igaz.
 
-### 5. Android release aláírás és App Link ujjlenyomat
+### 5. Android release keystore és App Link ujjlenyomat
 
-A címzetti folyamat mostantól **deep linkre** épül: a kapott linkre koppintva
-az appnak kell megnyílnia, nem a böngészőnek. Ehhez a Google-nek ellenőriznie
-kell, hogy a domain és az app összetartozik — és ehhez a **release aláírás
-SHA-256 ujjlenyomata** kell.
+1. **Keystore létrehozása.** Másold a `mobile/android/key.properties.example`-t
+   `key.properties`-re, és:
 
-**Két külön dolog hiányzik:**
+   ```bash
+   keytool -genkey -v -keystore upload-keystore.jks \
+     -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+   ```
 
-1. **A release build most a debug kulccsal ír alá.**
-   `mobile/android/app/build.gradle.kts:36-37` —
-   `signingConfig = signingConfigs.getByName("debug")`. Így nem lehet a Play
-   Store-ba feltölteni, és az ujjlenyomat sem lenne stabil. Készíts release
-   keystore-t, és állítsd át rá a `release` buildTypes blokkot.
+   A `key.properties`, a `*.jks` és a `*.keystore` gitignore-olva van. **A
+   keystore-ról csinálj biztonsági mentést**, olyan helyre, ahol öt év múlva is
+   megvan. Amíg nincs meg, a `flutter build appbundle --release` szándékosan
+   hibaüzenettel megáll.
 
 2. **Az ujjlenyomatot NEM a saját keystore-odból másold.** Új appoknál a Play
    App Signing kötelező, tehát a Google újraírja az aláírást. A helyes érték:
    **Play Console → Setup → App signing → App signing key certificate → SHA-256**.
 
-Ezután írd be ide:
-`web/public/.well-known/assetlinks.json` → `REPLACE_WITH_PLAY_CONSOLE_SHA256_FINGERPRINT`
+   Ezután írd be ide:
+   `web/public/.well-known/assetlinks.json` → `REPLACE_WITH_PLAY_CONSOLE_SHA256_FINGERPRINT`
 
-Formátum: nagybetűs hexa, kettősponttal tagolva
-(`AB:CD:EF:…`, 32 bájt = 95 karakter).
+   Formátum: nagybetűs hexa, kettősponttal tagolva
+   (`AB:CD:EF:…`, 32 bájt = 95 karakter).
 
 **Ellenőrzés eszközön** (telepítés után):
 
@@ -126,9 +122,9 @@ A `time-drop-pink.vercel.app` sornak `verified`-nek kell lennie. Ha
 
 ### 6. iOS Team ID és associated domains
 
-Ugyanez Apple oldalon. A `Runner.entitlements` fájl **elkészült**
-(`applinks:time-drop-pink.vercel.app`), és a `CODE_SIGN_ENTITLEMENTS` mindhárom
-konfigurációra be van állítva — de az AASA fájlba a **Team ID** kell.
+A `Runner.entitlements` fájl kész (`applinks:time-drop-pink.vercel.app`), és a
+`CODE_SIGN_ENTITLEMENTS` mindhárom konfigurációra be van állítva — de az AASA
+fájlba a **Team ID** kell.
 
 1. Apple Developer → **Membership** → Team ID (10 karakter, pl. `A1B2C3D4E5`)
 2. Írd be ide: `web/public/.well-known/apple-app-site-association` →
@@ -138,82 +134,27 @@ konfigurációra be van állítva — de az AASA fájlba a **Team ID** kell.
 
 > A pontos kitöltési útmutató a `web/public/.well-known/README.md`-ben van.
 
----
+### 7. Jogi szövegek véglegesítése
 
-## 🟡 FONTOS — biztonsági teendők
+1. **A helykitöltők kitöltése** a `/terms` és `/privacy` oldalon:
 
-### 7. Elfogadott kockázat: `pg_net` a kliens szerepköröknek
+   ```bash
+   grep -rn '\[\[' web/src/components/legal/
+   ```
 
-A `net.http_post` / `http_get` / `http_delete` EXECUTE joga a `PUBLIC`-on
-keresztül az `anon` és `authenticated` szerepköröknek is megvan — ez a
-`pg_net` kiterjesztés Supabase-alapértelmezése (a takarító jobhoz kellett
-engedélyezni).
+   `[[LEGAL_ENTITY]]`, `[[REGISTERED_ADDRESS]]`, `[[GOVERNING_LAW]]`,
+   `[[COURTS]]`. Amíg ezek benne vannak, ne küldd be a store-oknak.
 
-**Ellenőriztem: nem kihasználható.** A PostgREST csak a `public` sémát teszi
-közzé, a `/rest/v1/rpc/http_post` 404-et ad. A jogot **nem tudjuk visszavonni**:
-a függvények tulajdonosa `supabase_admin`, a mi `postgres` szerepkörünk nem
-tagja annak, így a REVOKE csendben hatástalan (ezt is leteszteltem).
+2. **Nézesd át jogásszal.** A szöveg a termék tényleges viselkedése alapján
+   készült (kód-feloldás kivétele, 3 hónapos megőrzés, egyszeri
+   vágólap-olvasás), de nem jogi tanácsadás — EU-s kiadásnál a GDPR-rész és az
+   adatkezelő megnevezése az, ami számít.
 
-**Amire figyelj:** ha valaha további sémát teszel közzé a PostgREST-en
-(Settings → API → Exposed schemas), ez azonnal SSRF-fé válik. Ilyenkor kérj
-Supabase támogatást a jog visszavonásához.
+3. **A `support@timedrop.app` cím fogadjon levelet.** Az appban és mindkét jogi
+   oldalon ez a kapcsolattartási cím, és a store-ok a review alatt **ténylegesen
+   írnak rá**. Ha a domainen nincs postafiók, ez néma elutasítás lesz.
 
-
-### 8. Terms és Privacy oldalak
-
-Az appban a paywall alján ezekre mutat link, de jelenleg **placeholder**:
-
-- `https://time-drop-pink.vercel.app/terms`
-- `https://time-drop-pink.vercel.app/privacy`
-
-Mindkét store elutasítja a beküldést valódi tartalom nélkül. Az adatvédelmi
-tájékoztatóban ki kell térni: helyadat, kamera/mikrofon, végponttól végpontig
-titkosítás, fióktörlés, és az ingyen dropok 3 hónapos megőrzési ideje.
-
-> A megőrzési szabály **pontos** megfogalmazása: az ingyenes dropot a nyitás
-> után egy hónappal töröljük, **kivéve, ha a feladó valaha fizetett** (bármikori
-> előfizetés vagy drop csomag). Aki fizetett, annak az ingyenes dropjai is
-> megmaradnak, a lemondás után is.
-
-> ⚠️ **Új, és muszáj szerepelnie:** a feladó dropronként bekapcsolhatja a
-> „Openable with the code alone" opciót. Az ilyen dropoknál a kulcs a
-> szerverre kerül, tehát **azt az egy emléket a szolgáltatás vissza tudja
-> fejteni**. A tájékoztató nem állíthatja, hogy minden tartalom végponttól
-> végpontig titkosított — azt kell írni, hogy alapértelmezetten az, és a
-> feladó dropronként lemondhat róla. (Részletek: `0030` migráció fejléce.)
->
-> A **vágólap-használatot** is érdemes említeni: az app az első indításkor
-> **egyetlen egyszer** megnézi a vágólapot, hogy a weboldalról érkező linket a
-> telepítés után át tudja venni. Ezt követően soha többé nem olvassa.
-
----
-
-## 🔵 A CÍMZETTI FOLYAMAT ÚJ RÉSZEI
-
-### 9. Weboldal újratelepítése
-
-A `web/` átállt az új rendszerre, tehát **újra kell deployolni**, különben a
-weboldal még a régi „Copy link" folyamatot mutatja, amit az app már nem kezel.
-
-Ami változott:
-
-- **A domain gyökere mostantól rendes landing page** — hero, „hogyan működik"
-  három lépésben, „miért más" három pontban, záró letöltő gombok, görgetésre
-  beúszó animációkkal. A korábbi két mondatos doboz megszűnt.
-- **A droplink oldal (`/c/{kód}`) szándékosan változatlan** — aki egy emléket
-  kapott, annak nem terméket kell mutatni.
-- **„Open in TimeDrop"** gomb — a `timedrop://` sémán adja át a dropot a
-  telepített appnak, a kulccsal együtt. Erre azért van szükség, mert a
-  böngésző már ezen a domainen áll, és egy ugyanoda mutató link **nem**
-  aktiválja újra az App/Universal Link kezelést.
-- **„Don't have the app? Get it"** — a teljes linket a vágólapra teszi, majd a
-  store-ba visz. Az app az **első indításkor, életében egyszer** megnézi a
-  vágólapot, és ha TimeDrop linket talál, azzal nyit.
-- A **6 karakteres kód** nagyban, koppintásra másolható.
-- A Play Store link javítva: `com.timedrop.app` → `com.timedrop.timedrop_mobile`
-  (a régi minden Android címzettet 404-re vitt).
-
-### 10. Store-azonosítók a weboldalon
+### 8. Store-azonosító a weboldalon
 
 `web/src/utils/osDetector.js`:
 
@@ -222,26 +163,35 @@ export const APP_STORE_URL = 'https://apps.apple.com/app/timedrop/id0000000000';
 ```
 
 Az `id0000000000` **helyőrző**. Amint létrejön az App Store Connect
-app-rekord, írd át a valódi Apple ID-ra, különben az iOS-es „Get it" gomb
+app-rekord, írd át a valódi Apple ID-ra, különben az iOS-es letöltő gomb
 404-re visz. A Play-oldali link már helyes.
 
 Ez a konstans **három helyen** látszik: a droplink oldal „Get it" gombján, a
 landing page hero-jában és a záró CTA-ban. Egy helyen kell átírni.
 
-> Az iOS `timedrop://` séma az `Info.plist`-ben már be van állítva
-> (`CFBundleURLTypes`), külön Apple-oldali engedélyt nem igényel — az
-> Associated Domains capability viszont igen, lásd a 6. pontot.
+### 9. Weboldal újratelepítése
 
-### 11. Landing page szövegek átolvasása
+A `web/` a legutóbbi deploy óta változott (jogi oldalak, eszközfüggő store
+gombok, pontosított titkosítási állítás), tehát **deployolni kell** — különben
+a `/terms` és `/privacy` link továbbra is a landing page-re visz, amit mindkét
+store elutasít.
 
-A landing page szövegeit én írtam, angolul, a termék tényleges viselkedése
-alapján. Három állítás szerepel benne, amit érdemes tudatosan jóváhagynod,
-mert marketing-ígéretként fognak működni:
+---
 
-- *„We cannot watch it"* — alapértelmezetten igaz. A „kóddal is megnyitható"
-  opcióval viszont **nem**, és ezt a landing page nem árnyalja. Ha ez zavar,
-  vagy a szöveget kell finomítani, vagy a store-leírásban külön kitérni rá.
-- *„Your first drop is free"* — a `free_drop_limit` jelenleg **100**
-  (4. pont). Kiadás előtt 1-re kell állítani, különben a mondat nem igaz.
-- Az App Store / Play gombok **mindkét platformon látszanak**, eszköztől
-  függetlenül — asztali gépen ez a helyes, mobilon egy fölösleges gomb.
+## 🟡 FONTOS — biztonsági teendők
+
+### 10. Elfogadott kockázat: `pg_net` a kliens szerepköröknek
+
+A `net.http_post` / `http_get` / `http_delete` EXECUTE joga a `PUBLIC`-on
+keresztül az `anon` és `authenticated` szerepköröknek is megvan — ez a
+`pg_net` kiterjesztés Supabase-alapértelmezése (a takarító jobhoz kellett
+engedélyezni).
+
+**Ellenőrizve: nem kihasználható.** A PostgREST csak a `public` sémát teszi
+közzé, a `/rest/v1/rpc/http_post` 404-et ad. A jogot **nem tudjuk visszavonni**:
+a függvények tulajdonosa `supabase_admin`, a mi `postgres` szerepkörünk nem
+tagja annak, így a REVOKE csendben hatástalan.
+
+**Amire figyelj:** ha valaha további sémát teszel közzé a PostgREST-en
+(Settings → API → Exposed schemas), ez azonnal SSRF-fé válik. Ilyenkor kérj
+Supabase támogatást a jog visszavonásához.

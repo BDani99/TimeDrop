@@ -72,37 +72,57 @@ class _RadarScreenState extends State<RadarScreen> {
   Timer? _heartbeatTimer;
   int? _heartbeatIntervalMs;
 
-  /// Which half of the search we are in. Held in state rather than derived
-  /// fresh each build so the hysteresis below has something to hold onto.
-  bool _inRadarMode = false;
+  /// Whether the proximity radar has joined the map. Held in state rather than
+  /// derived fresh each build so the hysteresis below has something to hold on
+  /// to. The map is on screen either way — this only adds an instrument.
+  bool _showRadar = false;
 
-  /// Flips [_inRadarMode] with a dead band, so GPS jitter around the threshold
-  /// cannot strobe the whole screen between a map and a radar.
-  void _syncMode(double? distance) {
+  /// Reveals and hides the radar with a dead band, so GPS jitter around the
+  /// threshold cannot make it flicker in and out.
+  void _syncRadarVisibility(double? distance) {
     if (distance == null) return;
     final config = SystemConfig.instance;
-    final next = _inRadarMode
-        ? distance <= config.mapReturnMeters
+    final next = _showRadar
+        ? distance <= config.radarHideMeters
         : distance <= config.radarSwitchMeters;
-    if (next == _inRadarMode) return;
+    if (next == _showRadar) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _inRadarMode = next);
+      if (mounted) setState(() => _showRadar = next);
     });
   }
 
-  /// Hands the drop's coordinates to whatever the user navigates with.
-  Future<void> _openDirections(CapsuleModel capsule) async {
+  /// Hands the drop's coordinates to whatever the user navigates with —
+  /// as a *route*, not as a dropped pin.
+  ///
+  /// The Android branch used to send a bare `geo:` URI, which opens the maps
+  /// app looking at the place and nothing more: the walker still had to find
+  /// the directions button and start the trip themselves. Both platforms now
+  /// get a directions URL with the destination, the walking mode and — when
+  /// the GPS has a fix — the origin, so the route is drawn on arrival.
+  Future<void> _openDirections(CapsuleModel capsule, LatLng? from) async {
     final lat = capsule.latitude;
     final lng = capsule.longitude;
+    final origin = from == null ? '' : '${from.latitude},${from.longitude}';
 
-    // `geo:` reaches any Android maps app the user has actually chosen;
-    // Apple Maps takes a URL. Both fall back to Google Maps on the web.
     final candidates = <Uri>[
       if (Platform.isIOS)
-        Uri.parse('https://maps.apple.com/?daddr=$lat,$lng')
+        // `saddr` left empty means "from where I am" to Apple Maps; dirflg=w
+        // asks for the walking route.
+        Uri.parse('https://maps.apple.com/?saddr=$origin&daddr=$lat,$lng&dirflg=w')
       else
-        Uri.parse('geo:$lat,$lng?q=$lat,$lng'),
-      Uri.parse('https://www.google.com/maps/dir/?api=1&destination=$lat,$lng'),
+        // Caught by the Google Maps app as an App Link, and still works in a
+        // browser if it is not installed.
+        Uri.parse(
+          'https://www.google.com/maps/dir/?api=1'
+          '${origin.isEmpty ? '' : '&origin=$origin'}'
+          '&destination=$lat,$lng&travelmode=walking&dir_action=navigate',
+        ),
+      Uri.parse(
+        'https://www.google.com/maps/dir/?api=1'
+        '&destination=$lat,$lng&travelmode=walking',
+      ),
+      // Last resort: any maps app at all, even if it only shows the place.
+      Uri.parse('geo:$lat,$lng?q=$lat,$lng'),
     ];
 
     for (final uri in candidates) {
@@ -156,14 +176,20 @@ class _RadarScreenState extends State<RadarScreen> {
     });
   }
 
+  /// The quickening pulse. Starts at the same distance the radar appears, so
+  /// the instrument and the feeling arrive together rather than the radar
+  /// showing up silently and the pulse joining fifty metres later.
   void _syncHeartbeat(double? distance) {
-    if (distance == null || distance >= AppConstants.radarClosingMeters) {
+    final revealAt = SystemConfig.instance.radarSwitchMeters;
+    if (distance == null || distance >= revealAt) {
       _heartbeatTimer?.cancel();
       _heartbeatTimer = null;
       _heartbeatIntervalMs = null;
       return;
     }
-    final t = (distance / AppConstants.radarClosingMeters).clamp(0.0, 1.0);
+    // Same 250 ms → 1400 ms span as before, stretched over the wider range so
+    // the pulse still races only in the final metres.
+    final t = (distance / revealAt).clamp(0.0, 1.0);
     final intervalMs = (250 + t * 1150).round();
     if (_heartbeatTimer != null &&
         _heartbeatIntervalMs != null &&
@@ -190,16 +216,12 @@ class _RadarScreenState extends State<RadarScreen> {
     return (1 - (distance / zone)).clamp(0.0, 1.0);
   }
 
-  double? _bearing(CapsuleProvider provider, CapsuleModel capsule) {
+  /// Where the recipient is, when the GPS has said so.
+  LatLng? _userLatLng(CapsuleProvider provider) {
     final lat = provider.userLatitude;
     final lng = provider.userLongitude;
     if (lat == null || lng == null) return null;
-    return GeolocationService.bearingDegrees(
-      startLat: lat,
-      startLng: lng,
-      endLat: capsule.latitude,
-      endLng: capsule.longitude,
-    );
+    return LatLng(lat, lng);
   }
 
   void _exit() {
@@ -258,26 +280,42 @@ class _RadarScreenState extends State<RadarScreen> {
     );
   }
 
-  /// The macro half: street map + a handoff to the user's own maps app.
-  Widget _macroMap(CapsuleProvider provider, CapsuleModel capsule) {
-    final lat = provider.userLatitude;
-    final lng = provider.userLongitude;
+  /// The map, the distance and the handoff to the user's own maps app — the
+  /// part of this screen that is always on.
+  ///
+  /// It fills whatever height the layout can spare instead of the fixed 280 px
+  /// it used to take, because it is no longer one of two alternating panels.
+  /// The distance chip is layered on top of the map rather than left in the
+  /// subtitle: it has to survive every phase, including the ones that put
+  /// something else in the headline.
+  Widget _mapSection(CapsuleProvider provider, CapsuleModel capsule) {
+    final user = _userLatLng(provider);
 
     return Column(
-      mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          height: 280,
-          child: RecipientMapView(
-            target: LatLng(capsule.latitude, capsule.longitude),
-            userLocation: (lat != null && lng != null) ? LatLng(lat, lng) : null,
+        Expanded(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: RecipientMapView(
+                  key: ValueKey('map-${capsule.id}'),
+                  target: LatLng(capsule.latitude, capsule.longitude),
+                  userLocation: user,
+                ),
+              ),
+              const Positioned(
+                left: AppSpacing.sm,
+                bottom: AppSpacing.sm,
+                child: _DistanceChip(),
+              ),
+            ],
           ),
         ),
         const SizedBox(height: AppSpacing.md),
         OutlinedButton.icon(
-          onPressed: () => _openDirections(capsule),
+          onPressed: () => _openDirections(capsule, user),
           icon: const Icon(Icons.directions_outlined, size: 18),
-          label: const Text('Get Directions'),
+          label: const Text('Get directions'),
         ),
       ],
     );
@@ -286,7 +324,6 @@ class _RadarScreenState extends State<RadarScreen> {
   Widget _buildPhase(BuildContext context, CapsuleProvider provider, CapsuleModel capsule) {
     final distance = provider.distanceMeters;
     final proximity = _proximity(distance);
-    final bearing = _bearing(provider, capsule);
     final closing = distance != null && distance < AppConstants.radarClosingMeters;
 
     switch (provider.radarPhase) {
@@ -295,24 +332,16 @@ class _RadarScreenState extends State<RadarScreen> {
 
       case RadarPhase.waiting:
         // GPS runs during the wait too, so the map can show how far they are
-        // and "Get Directions" is useful for planning the trip.
+        // and "Get directions" is useful for planning the trip.
         if (!_isWatching) {
           _isWatching = true;
           WidgetsBinding.instance.addPostFrameCallback((_) => provider.startWatchingPosition());
         }
         return _RadarLayout(
           title: 'A memory is waiting for you.',
-          subtitle: distance != null
-              ? '${DistanceMotivation.formatDistance(distance)} away — it opens in:'
-              : 'It opens in:',
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CountdownTimer(target: capsule.unlockTime),
-              const SizedBox(height: AppSpacing.lg),
-              _macroMap(provider, capsule),
-            ],
-          ),
+          subtitle: 'It opens in:',
+          header: CountdownTimer(target: capsule.unlockTime),
+          child: _mapSection(provider, capsule),
         );
 
       case RadarPhase.searching:
@@ -321,7 +350,7 @@ class _RadarScreenState extends State<RadarScreen> {
           WidgetsBinding.instance.addPostFrameCallback((_) => provider.startWatchingPosition());
         }
         WidgetsBinding.instance.addPostFrameCallback((_) => _syncHeartbeat(distance));
-        _syncMode(distance);
+        _syncRadarVisibility(distance);
         // Decrypt in progress after proximity — keep the radar UI but show
         // a clear "opening" state instead of jumping to a stuck spinner.
         if (provider.unlockError != null) {
@@ -348,32 +377,23 @@ class _RadarScreenState extends State<RadarScreen> {
             ),
           );
         }
-        // Macro → micro. The crossfade is deliberately slow enough to read as
-        // a change of mode rather than a glitch, and it lands at the same
-        // moment the haptic pulse starts.
+        // The map never leaves. Close in and the radar grows in underneath it,
+        // as a second instrument rather than a replacement — the street map is
+        // what got them here and it is still the only thing that can show them
+        // the last corner.
         return _RadarLayout(
-          title: _inRadarMode
+          title: _showRadar
               ? DistanceMotivation.titleFor(distance, isClosing: closing)
               : 'Head to the spot.',
           subtitle: distance != null
               ? DistanceMotivation.messageFor(distance)
               : 'Finding your position…',
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 600),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            child: _inRadarMode
-                ? SciFiRadarView(
-                    key: const ValueKey('micro-radar'),
-                    bearingDegrees: bearing,
-                    distanceMeters: distance,
-                    proximity: proximity,
-                  )
-                : KeyedSubtree(
-                    key: const ValueKey('macro-map'),
-                    child: _macroMap(provider, capsule),
-                  ),
+          footer: _RadarReveal(
+            visible: _showRadar,
+            distanceMeters: distance,
+            proximity: proximity,
           ),
+          child: _mapSection(provider, capsule),
         );
 
       case RadarPhase.unlocked:
@@ -435,52 +455,158 @@ class _RadarScreenState extends State<RadarScreen> {
   }
 }
 
+/// The common shell: a compact headline, then whatever the phase puts on
+/// screen, taking all the height that is left.
+///
+/// This used to be a `SingleChildScrollView` around a centred column, because
+/// the phases stacked a countdown, a fixed 280 px map and a button, and that
+/// overflowed a small phone. Nothing here is fixed-height any more — the map
+/// takes the slack — so there is no scroll and no reason for one. A map you
+/// have to scroll to is a map you cannot glance at, which was the whole
+/// complaint.
 class _RadarLayout extends StatelessWidget {
   const _RadarLayout({
     required this.title,
     required this.child,
     this.subtitle,
+    this.header,
+    this.footer,
   });
 
   final String title;
   final String? subtitle;
+
+  /// Sits between the headline and [child]. The countdown, while waiting.
+  final Widget? header;
+
+  /// The body. Given every pixel the headline and footer do not take.
   final Widget child;
+
+  /// Beneath the body: the proximity radar, once it is close enough to matter.
+  final Widget? footer;
 
   @override
   Widget build(BuildContext context) {
-    // Scrollable, because the macro phase stacks a countdown, a 280 px map and
-    // a button — that overflows a small phone if the column is rigid. The
-    // minHeight keeps everything vertically centred on roomier screens.
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(AppSpacing.containerMargin),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              minHeight: constraints.maxHeight - AppSpacing.containerMargin * 2,
+    return Padding(
+      padding: const EdgeInsets.all(AppSpacing.containerMargin),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(title,
+              style: AppTypography.headlineMd, textAlign: TextAlign.center),
+          if (subtitle != null) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              subtitle!,
+              style:
+                  AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
+              textAlign: TextAlign.center,
             ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(title,
-                    style: AppTypography.headlineMd, textAlign: TextAlign.center),
-                if (subtitle != null) ...[
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    subtitle!,
-                    style: AppTypography.bodyMd
-                        .copyWith(color: AppColors.onSurfaceVariant),
-                    textAlign: TextAlign.center,
+          ],
+          if (header case final headerWidget?) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Center(child: headerWidget),
+          ],
+          const SizedBox(height: AppSpacing.md),
+          Expanded(child: Center(child: child)),
+          ?footer,
+        ],
+      ),
+    );
+  }
+}
+
+/// Always-on distance readout, layered over the map.
+///
+/// It reads the provider directly instead of taking a value, because the GPS
+/// stream notifies every metre walked: passing the number down would rebuild
+/// the map with it, and rebuilding a `FlutterMap` once a second is not free.
+class _DistanceChip extends StatelessWidget {
+  const _DistanceChip();
+
+  @override
+  Widget build(BuildContext context) {
+    final distance = context.select<CapsuleProvider, double?>(
+      (p) => p.distanceMeters,
+    );
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.surface.withValues(alpha: 0.92),
+        borderRadius: const BorderRadius.all(Radius.circular(999)),
+        boxShadow: const [
+          BoxShadow(color: Color(0x1A000000), blurRadius: 8, offset: Offset(0, 2)),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm + 2,
+          vertical: AppSpacing.xs + 2,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              distance == null ? Icons.gps_not_fixed : Icons.straighten,
+              size: 14,
+              color: AppColors.onSurfaceVariant,
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              distance == null
+                  ? 'Locating you…'
+                  : '${DistanceMotivation.formatDistance(distance)} away',
+              style: AppTypography.labelSm.copyWith(
+                color: AppColors.onSurface,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The proximity radar growing in beneath the map, and shrinking away again if
+/// the walker drifts back out. Sized rather than faded so the map gives up its
+/// height smoothly instead of the radar landing on top of it.
+class _RadarReveal extends StatelessWidget {
+  const _RadarReveal({
+    required this.visible,
+    required this.distanceMeters,
+    required this.proximity,
+  });
+
+  final bool visible;
+  final double? distanceMeters;
+  final double proximity;
+
+  @override
+  Widget build(BuildContext context) {
+    // Never more than a third of the screen. The map is the thing that has to
+    // survive this — a fixed radar height would eat a short phone's map down to
+    // a strip at exactly the moment the walker is checking it most often.
+    final maxHeight =
+        (MediaQuery.sizeOf(context).height * 0.28).clamp(140.0, 220.0);
+
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 520),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      child: !visible
+          ? const SizedBox(width: double.infinity, height: 0)
+          : Padding(
+              padding: const EdgeInsets.only(top: AppSpacing.md),
+              child: SizedBox(
+                height: maxHeight,
+                child: Center(
+                  child: SciFiRadarView(
+                    distanceMeters: distanceMeters,
+                    proximity: proximity,
                   ),
-                ],
-                const SizedBox(height: AppSpacing.lg),
-                Center(child: child),
-              ],
+                ),
+              ),
             ),
-          ),
-        );
-      },
     );
   }
 }
@@ -517,13 +643,13 @@ class _MaterializingState extends StatelessWidget {
           const SkeletonBox(width: double.infinity, height: 280, borderRadius: 28),
           const SizedBox(height: AppSpacing.lg),
           Text(
-            'Materializing your memory…',
+            'Almost ready…',
             style: AppTypography.headlineMd,
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(
-            'The capsule is still sealing in the cloud.',
+            'The sender\'s memory is still being sealed — this takes a moment.',
             style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
             textAlign: TextAlign.center,
           ),
@@ -552,7 +678,7 @@ class _ErrorState extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppSpacing.md),
-            PrimaryButton(label: 'Back to Home', onPressed: onBackHome),
+            PrimaryButton(label: 'Back to home', onPressed: onBackHome),
           ],
         ),
       ),

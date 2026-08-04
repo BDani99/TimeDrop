@@ -7,17 +7,21 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/utils/distance_motivation.dart';
 
-/// Sci-fi radar view — no street map, pulsing rings + bearing indicator.
+/// The proximity radar: pulsing rings that quicken as the memory gets closer.
+///
+/// It deliberately does **not** point anywhere. It used to carry a bearing
+/// needle, back when it replaced the map entirely and was the only thing left
+/// to navigate by. The map now stays on screen the whole way in, so direction
+/// is the map's job and this is free to be what it is good at: a "warmer /
+/// colder" instrument for the last hundred metres, where a needle is noise
+/// anyway because GPS bearing thrashes at walking speed.
 class SciFiRadarView extends StatefulWidget {
   const SciFiRadarView({
     super.key,
-    required this.bearingDegrees,
     required this.distanceMeters,
     this.proximity = 0,
   });
 
-  /// Bearing from device to target in degrees (0 = north).
-  final double? bearingDegrees;
   final double? distanceMeters;
 
   /// 0..1 proximity factor for visual intensity.
@@ -71,9 +75,6 @@ class _SciFiRadarViewState extends State<SciFiRadarView>
                 return CustomPaint(
                   painter: _SciFiRadarPainter(
                     pulse: _pulse.value,
-                    bearingRadians: widget.bearingDegrees != null
-                        ? widget.bearingDegrees! * pi / 180
-                        : null,
                     proximity: widget.proximity,
                   ),
                   size: Size.infinite,
@@ -114,12 +115,10 @@ class _SciFiRadarViewState extends State<SciFiRadarView>
 class _SciFiRadarPainter extends CustomPainter {
   _SciFiRadarPainter({
     required this.pulse,
-    this.bearingRadians,
     required this.proximity,
   });
 
   final double pulse;
-  final double? bearingRadians;
   final double proximity;
 
   @override
@@ -171,24 +170,6 @@ class _SciFiRadarPainter extends CustomPainter {
       canvas.drawCircle(center, maxR * p, ring);
     }
 
-    if (bearingRadians != null) {
-      final needle = Paint()
-        ..color = AppColors.primaryFixed
-        ..strokeWidth = 3
-        ..strokeCap = StrokeCap.round;
-      final tip = center +
-          Offset(
-            sin(bearingRadians!) * maxR * 0.75,
-            -cos(bearingRadians!) * maxR * 0.75,
-          );
-      canvas.drawLine(center, tip, needle);
-      canvas.drawCircle(
-        tip,
-        6,
-        Paint()..color = AppColors.primaryFixed,
-      );
-    }
-
     canvas.drawCircle(
       center,
       10 + proximity * 6,
@@ -198,7 +179,5 @@ class _SciFiRadarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _SciFiRadarPainter oldDelegate) =>
-      oldDelegate.pulse != pulse ||
-      oldDelegate.bearingRadians != bearingRadians ||
-      oldDelegate.proximity != proximity;
+      oldDelegate.pulse != pulse || oldDelegate.proximity != proximity;
 }

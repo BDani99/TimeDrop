@@ -65,7 +65,7 @@ class _PermissionGateState extends State<PermissionGate> {
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: AppSpacing.md),
-                PrimaryButton(label: 'Try Again', onPressed: _check),
+                PrimaryButton(label: 'Try again', onPressed: _check),
                 const SizedBox(height: AppSpacing.xs),
                 // If the OS already recorded a "don't allow"/permanent
                 // denial, re-requesting silently returns denied again with

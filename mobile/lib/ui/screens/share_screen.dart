@@ -63,7 +63,7 @@ class ShareScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: AppSpacing.lg),
                       Text(
-                        'Your capsule is sealed!',
+                        'Your drop is sealed.',
                         style: AppTypography.headlineLg,
                         textAlign: TextAlign.center,
                       ),
@@ -152,7 +152,8 @@ class ShareScreen extends StatelessWidget {
                       const SizedBox(height: AppSpacing.sm),
                       TextButton(
                         onPressed: () => Navigator.popUntil(context, (route) => route.isFirst),
-                        child: const Text('Return to Dashboard'),
+                        // "Dashboard" is a screen this app does not have.
+                        child: const Text('Back to home'),
                       ),
                       const Spacer(flex: 1),
                     ],

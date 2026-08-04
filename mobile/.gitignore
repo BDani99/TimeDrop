@@ -43,3 +43,14 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Release signing. key.properties holds the keystore passwords in plain text,
+# and the keystore is the one file that cannot be regenerated.
+/android/key.properties
+*.jks
+*.keystore
+
+# Build-time secrets passed via --dart-define-from-file: the RevenueCat SDK
+# keys. Publishable rather than secret, but they still do not belong in git —
+# and env.example.json is here so the shape is not lost with them.
+env.json

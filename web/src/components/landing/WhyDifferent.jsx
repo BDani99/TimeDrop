@@ -4,11 +4,19 @@ import { useReveal } from '../../hooks/useReveal';
 // aspirational: the payload is withheld server-side until the unlock time, the
 // key travels in the URL fragment so it never reaches us, and proximity is
 // checked on the device before anything is decrypted.
+//
+// The first one used to end "nobody here can open what you sent", full stop.
+// That is untrue for a drop where the sender switched on "openable with the
+// code alone", which stores the key on our servers (migration 0030) — and a
+// privacy claim that holds "except when it doesn't" is the one kind of claim
+// worth spending a sentence to qualify. Saying it plainly is also a better
+// pitch than overpromising: it shows the default was a decision, not a
+// limitation.
 const POINTS = [
   {
     icon: '🔒',
     title: 'We cannot watch it',
-    body: 'Your memory is encrypted on your phone. The key travels inside the link and never reaches our servers, so nobody here can open what you sent.',
+    body: 'Your memory is encrypted on your phone, and the key travels inside the link — it never reaches our servers. The only exception is one you choose: if you turn on opening by code, that drop\'s key is stored with us so a typed code can unlock it.',
   },
   {
     icon: '🗺️',

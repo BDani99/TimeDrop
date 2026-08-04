@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -14,6 +13,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/vault_provider.dart';
 import '../../services/supabase_service.dart';
 import '../router/app_router.dart';
+import '../utils/route_transition.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/memory/keepsake_card.dart';
 import '../widgets/primary_button.dart';
@@ -37,6 +37,7 @@ class VideoPlayerScreen extends StatefulWidget {
     this.latitude,
     this.longitude,
     this.facts,
+    this.autoPlay = true,
   });
 
   final Uint8List mediaBytes;
@@ -56,6 +57,16 @@ class VideoPlayerScreen extends StatefulWidget {
   /// Given here so the same card stays swipeable after the video and photos,
   /// on this viewing and on every later replay.
   final MemoryFacts? facts;
+
+  /// Whether the video starts on its own.
+  ///
+  /// True for the first viewing, where the playback *is* the moment the
+  /// recipient walked there for. False when the memory is replayed from the
+  /// Vault: someone reopening an old drop may well have come for a photo, and
+  /// a video that starts talking on its own takes that choice away. With it
+  /// off, the screen opens straight into the gallery — video paused on the
+  /// first page, photos a swipe away, playback one tap.
+  final bool autoPlay;
 
   @override
   State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
@@ -99,7 +110,11 @@ class _VideoLoadingPlaceholder extends StatelessWidget {
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   VideoPlayerController? _controller;
   bool _isReady = false;
-  bool _videoEnded = false;
+
+  /// Whether the swipeable gallery (video page + photos + keepsake) is showing
+  /// instead of the single full-bleed playback stage. Set when the first watch
+  /// finishes — or straight away on a replay, which never has a first watch.
+  bool _showGallery = false;
   bool _showNote = true;
   bool _markedViewed = false;
 
@@ -114,19 +129,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   Future<void> _waitForRouteThenInit() async {
     if (!mounted) return;
-    final animation = ModalRoute.of(context)?.animation;
-    if (animation != null && !animation.isCompleted) {
-      final done = Completer<void>();
-      void onStatus(AnimationStatus status) {
-        if (status == AnimationStatus.completed ||
-            status == AnimationStatus.dismissed) {
-          animation.removeStatusListener(onStatus);
-          if (!done.isCompleted) done.complete();
-        }
-      }
-      animation.addStatusListener(onStatus);
-      await done.future;
-    }
+    // No timeout here: a detached texture is worse than a late start, so this
+    // one genuinely wants to wait for the transition rather than give up on it.
+    await waitForRouteTransition(context, timeout: const Duration(seconds: 2));
     if (!mounted) return;
     await _init();
   }
@@ -157,8 +162,14 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       setState(() {
         _controller = controller;
         _isReady = true;
+        // A replay has no first watch to wait out — the gallery is the whole
+        // screen from the start, with the video paused on its first page.
+        _showGallery = !widget.autoPlay;
       });
-      await _startPlayback();
+      // Written down whether or not anything plays: opening the memory is what
+      // "viewed" means, and a replay should still refresh when that last was.
+      await _markViewedIfNeeded();
+      if (widget.autoPlay) await _startPlayback();
     } catch (e) {
       if (mounted) AppSnackbar.showError(context, e);
     }
@@ -169,7 +180,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (controller == null) return;
     await controller.play();
     AppHaptics.medium();
-    await _markViewedIfNeeded();
     _scheduleNoteHide();
   }
 
@@ -208,8 +218,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
     final v = controller.value;
-    if (!_videoEnded && v.position >= v.duration && v.duration > Duration.zero) {
-      setState(() => _videoEnded = true);
+    if (!_showGallery && v.position >= v.duration && v.duration > Duration.zero) {
+      setState(() => _showGallery = true);
     }
   }
 
@@ -218,7 +228,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     if (controller == null) return;
     await controller.seekTo(Duration.zero);
     await controller.play();
-    if (mounted) setState(() => _videoEnded = false);
   }
 
   /// "Done". Nothing is sold here any more — a paywall thrown up in the second
@@ -246,7 +255,6 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
-    final showGallery = _videoEnded;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -259,11 +267,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
                   child: Center(
                     child: !_isReady || controller == null
                         ? const _VideoLoadingPlaceholder()
-                        : showGallery
+                        : _showGallery
                             ? _UnifiedGallery(
                                 controller: controller,
                                 photos: widget.photos,
                                 onReplayVideo: _replayVideo,
+                                note: widget.note,
                                 capturedAt: widget.capturedAt,
                                 latitude: widget.latitude,
                                 longitude: widget.longitude,
@@ -358,6 +367,7 @@ class _UnifiedGallery extends StatefulWidget {
     required this.controller,
     required this.photos,
     required this.onReplayVideo,
+    required this.note,
     required this.capturedAt,
     required this.latitude,
     required this.longitude,
@@ -367,6 +377,11 @@ class _UnifiedGallery extends StatefulWidget {
   final VideoPlayerController controller;
   final List<Uint8List> photos;
   final Future<void> Function() onReplayVideo;
+
+  /// The sender's note. Shown over the paused video page, because a replay
+  /// opens straight into the gallery and would otherwise never show it — the
+  /// note used to live only on the first watch's playback stage.
+  final String? note;
   final DateTime? capturedAt;
   final double? latitude;
   final double? longitude;
@@ -417,6 +432,7 @@ class _UnifiedGalleryState extends State<_UnifiedGallery> {
               return _VideoReplayPage(
                 controller: widget.controller,
                 onReplay: widget.onReplayVideo,
+                note: widget.note,
                 capturedAt: widget.capturedAt,
                 latitude: widget.latitude,
                 longitude: widget.longitude,
@@ -471,12 +487,14 @@ class _UnifiedGalleryState extends State<_UnifiedGallery> {
 }
 
 /// The video "page" inside the unified gallery: shows the paused video, the
-/// timestamp watermark, and — when not playing — a large centered play/replay
-/// button. Tapping the video toggles play/pause.
+/// timestamp watermark, the sender's note while nothing is playing, and — when
+/// not playing — a large centered play/replay button. Tapping the video toggles
+/// play/pause.
 class _VideoReplayPage extends StatefulWidget {
   const _VideoReplayPage({
     required this.controller,
     required this.onReplay,
+    required this.note,
     required this.capturedAt,
     required this.latitude,
     required this.longitude,
@@ -484,6 +502,7 @@ class _VideoReplayPage extends StatefulWidget {
 
   final VideoPlayerController controller;
   final Future<void> Function() onReplay;
+  final String? note;
   final DateTime? capturedAt;
   final double? latitude;
   final double? longitude;
@@ -527,42 +546,52 @@ class _VideoReplayPageState extends State<_VideoReplayPage> {
     final v = widget.controller.value;
     final isPlaying = v.isPlaying;
     final isFinished = v.position >= v.duration && v.duration > Duration.zero;
+    final note = widget.note ?? '';
 
-    return Center(
-      child: GestureDetector(
-        onTap: _handleTap,
-        child: AspectRatio(
-          aspectRatio: v.aspectRatio,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              VideoPlayer(widget.controller),
-              if (widget.capturedAt != null)
-                Positioned(
-                  top: AppSpacing.sm,
-                  left: AppSpacing.md,
-                  child: WatermarkStamp(
-                    timestamp: widget.capturedAt!,
-                  ),
-                ),
-              if (!isPlaying)
-                Container(
-                  width: 72,
-                  height: 72,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.45),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    isFinished ? Icons.replay : Icons.play_arrow,
-                    color: Colors.white,
-                    size: 40,
-                  ),
-                ),
-            ],
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Center(
+          child: GestureDetector(
+            onTap: _handleTap,
+            child: AspectRatio(
+              aspectRatio: v.aspectRatio,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  VideoPlayer(widget.controller),
+                  if (widget.capturedAt != null)
+                    Positioned(
+                      top: AppSpacing.sm,
+                      left: AppSpacing.md,
+                      child: WatermarkStamp(
+                        timestamp: widget.capturedAt!,
+                      ),
+                    ),
+                  if (!isPlaying)
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        isFinished ? Icons.replay : Icons.play_arrow,
+                        color: Colors.white,
+                        size: 40,
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
-      ),
+        // The note is what the sender wrote, so it greets a replay the same way
+        // it greeted the first watch — and gets out of the way the moment the
+        // video starts, rather than sitting on top of it.
+        HandwrittenNoteOverlay(note: note, visible: !isPlaying),
+      ],
     );
   }
 }

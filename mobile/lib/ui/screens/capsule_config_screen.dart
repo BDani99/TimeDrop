@@ -416,7 +416,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
     final isCreating = context.watch<CapsuleProvider>().isCreating;
     return Scaffold(
       backgroundColor: AppColors.surface,
-      appBar: AppBar(title: const Text('Seal this Moment')),
+      appBar: AppBar(title: const Text('Seal this moment')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(AppSpacing.containerMargin),
@@ -586,7 +586,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
             ),
             const SizedBox(height: AppSpacing.lg),
             PrimaryButton(
-              label: 'Seal this Moment',
+              label: 'Seal this moment',
               isLoading: isCreating,
               onPressed: _onSealPressed,
             ),

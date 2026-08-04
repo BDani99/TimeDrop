@@ -61,7 +61,11 @@ class MemoryDetailScreen extends StatelessWidget {
       ),
       MemoryTimelineEvent(
         title: 'Waiting',
-        subtitle: '${waitingDuration.inDays} days',
+        // Anything under a day used to render as a flat "0 days".
+        subtitle: waitingDuration.inDays < 1
+            ? 'Less than a day'
+            : '${waitingDuration.inDays} '
+                '${waitingDuration.inDays == 1 ? 'day' : 'days'}',
         icon: Icons.hourglass_empty,
       ),
       MemoryTimelineEvent(
@@ -98,7 +102,7 @@ class MemoryDetailScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Memory Timeline', style: AppTypography.headlineMd),
+                Text('Memory timeline', style: AppTypography.headlineMd),
                 const SizedBox(height: AppSpacing.md),
                 for (var i = 0; i < events.length; i++) ...[
                   _TimelineRow(event: events[i], isLast: i == events.length - 1, index: i),

@@ -316,7 +316,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   const SizedBox(height: AppSpacing.sm),
                   OutlinedButton(
                     onPressed: _continueFree,
-                    child: const Text('Continue with 1 free capsule'),
+                    child: const Text('Continue with 1 free drop'),
                   ),
                 ] else ...[
                   const SizedBox(height: AppSpacing.sm),
@@ -329,7 +329,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
                 TextButton(
                   onPressed: _isRestoring ? null : _restore,
                   child: Text(
-                    _isRestoring ? 'Restoring…' : 'Restore Purchases',
+                    _isRestoring ? 'Restoring…' : 'Restore purchases',
                   ),
                 ),
 

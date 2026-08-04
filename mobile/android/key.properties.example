@@ -1,0 +1,23 @@
+# Release signing credentials. Copy to `key.properties` and fill in.
+#
+# `key.properties` and the keystore itself are gitignored — do not commit
+# either, and keep a backup of the keystore somewhere you will still have it
+# in five years. Losing it does not end the app (Play App Signing lets you
+# reset an upload key), but losing it *and* not being enrolled does.
+#
+# Create the keystore with:
+#
+#   keytool -genkey -v -keystore upload-keystore.jks \
+#     -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+#
+# storeFile is resolved relative to the `android/` directory.
+
+storeFile=upload-keystore.jks
+storePassword=
+keyAlias=upload
+keyPassword=
+
+# Reminder: the SHA-256 that goes into
+# web/public/.well-known/assetlinks.json is NOT this keystore's fingerprint.
+# Google re-signs the app, so take the value from
+# Play Console → Setup → App signing → App signing key certificate.

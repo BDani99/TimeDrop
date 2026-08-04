@@ -5,12 +5,12 @@ import '../../core/errors/app_exception.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/utils/name_format.dart';
 import '../../core/utils/share_link_parser.dart';
 import '../../models/capsule_model.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/supabase_service.dart';
 import '../router/app_router.dart';
-import 'home_screen.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/countdown_timer.dart';
 import '../widgets/loading/skeleton_box.dart';
@@ -167,11 +167,10 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
   }
 
   void _openVault() {
-    // Navigate to the app home with the Vault tab open.
-    Navigator.of(context).pushAndRemoveUntil(
-      SpringPageRoute(page: const HomeScreen()),
-      (route) => false,
-    );
+    // Hands over to the shared recipient exit, which lands on Home *with the
+    // Vault open on top* — and, unlike a bare push, also releases the pending
+    // share link and routes through onboarding when it has not been done yet.
+    enterAppAfterRecipient(context, landOnVault: true);
   }
 
   void _openNow() {
@@ -194,7 +193,7 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final from = widget.fromName?.trim();
+    final from = NameFormat.display(widget.fromName);
     final canPop = Navigator.of(context).canPop();
 
     return Scaffold(
@@ -223,21 +222,16 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
                           color: AppColors.primary.withValues(alpha: 0.85),
                         ),
                         const SizedBox(height: AppSpacing.lg),
+                        // One sentence, not a headline with a fragment stuck
+                        // under it. "Someone left you a memory" + "from dani"
+                        // read as a single broken line on the screen.
                         Text(
-                          'Someone left you a memory',
+                          from == null
+                              ? 'Someone left you a memory.'
+                              : '$from left you a memory.',
                           textAlign: TextAlign.center,
                           style: AppTypography.headlineLg,
                         ),
-                        if (from != null && from.isNotEmpty) ...[
-                          const SizedBox(height: AppSpacing.sm),
-                          Text(
-                            'from $from',
-                            textAlign: TextAlign.center,
-                            style: AppTypography.bodyMd.copyWith(
-                              color: AppColors.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
                         const SizedBox(height: AppSpacing.md),
                         Text(
                           !_hasKey
@@ -300,7 +294,7 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
                             ),
                           ] else if (!canPop) ...[
                             // Fresh receive from a link: guide user to the Vault.
-                            PrimaryButton(label: 'Open My Vault', onPressed: _openVault),
+                            PrimaryButton(label: 'Open my vault', onPressed: _openVault),
                           ],
                           // When canPop=true (came from the Vault), no bottom
                           // button is needed — the AppBar back arrow suffices.
@@ -343,7 +337,7 @@ class _GiftError extends StatelessWidget {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text('Could not open this gift.', style: AppTypography.headlineMd),
+        Text('Could not open this drop.', style: AppTypography.headlineMd),
         const SizedBox(height: AppSpacing.lg),
         PrimaryButton(label: 'Close', onPressed: onClose),
       ],

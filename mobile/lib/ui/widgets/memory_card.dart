@@ -50,7 +50,7 @@ class MemoryCard extends StatelessWidget {
     if (_isFailed) return 'Upload Failed — Tap to Retry';
     if (_isPending) return 'Sealing your memory…';
     final now = DateTime.now();
-    if (!unlockTime.isAfter(now)) return 'Unlockable for them';
+    if (!unlockTime.isAfter(now)) return 'Ready for them to open';
     final diff = unlockTime.difference(now);
     if (diff.inDays >= 30) {
       return 'Sealed until ${_months[unlockTime.month - 1]} ${unlockTime.year}';

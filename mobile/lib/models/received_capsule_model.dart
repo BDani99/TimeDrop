@@ -1,3 +1,5 @@
+import '../core/utils/name_format.dart';
+
 /// A capsule the current user has resolved as a *recipient* — tracked from
 /// the moment a share link/code is first seen (clipboard auto-detect or
 /// manual entry in the Gallery), independent of unlock status. Persists
@@ -70,8 +72,9 @@ class ReceivedCapsuleModel {
 
   /// "From X · City" subtitle for Vault cards.
   String get senderLabel {
-    final name = (fromName != null && fromName!.isNotEmpty) ? fromName! : 'someone';
-    final base = 'From $name';
+    // Through NameFormat so a name typed in lower case reads as a name here,
+    // and so the Vault says the same thing the receive screen said.
+    final base = 'From ${NameFormat.display(fromName) ?? 'someone'}';
     return (city != null && city!.isNotEmpty) ? '$base · $city' : base;
   }
 

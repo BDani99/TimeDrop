@@ -269,9 +269,13 @@ class _HomeScreenState extends State<HomeScreen> with ScrollPaginationMixin {
 
   @override
   Widget build(BuildContext context) {
-    final vault = context.watch<VaultProvider>();
-    final readyCount = vault.ready.length;
-    final waitingCount = vault.waiting.length;
+    // Only the two inbox counts, not the provider itself: Home is reloaded from
+    // a background upload finishing and from the Vault loading in the
+    // background, and watching the whole provider rebuilt this entire tree —
+    // header, cards, shadows and all — for a change it does not render.
+    final (readyCount, waitingCount) = context.select<VaultProvider, (int, int)>(
+      (v) => (v.ready.length, v.waiting.length),
+    );
     final hasInbox = readyCount > 0 || waitingCount > 0;
     final hasUnopenedReady = readyCount > 0;
 
@@ -293,6 +297,129 @@ class _HomeScreenState extends State<HomeScreen> with ScrollPaginationMixin {
     final archivedShown = earlierExpanded && archivedBudget > 0
         ? archived.take(archivedBudget)
         : const <CapsuleModel>[];
+
+    // Collected as builders so the sliver below can build only what is on
+    // screen. Pagination fires mid-drag, and with every row built eagerly that
+    // setState re-created the whole list — shadows included — to reveal five
+    // more cards, on the frame the finger was moving.
+    final rows = <Widget Function()>[];
+
+    rows.add(() => Center(
+          child: PrimaryButton(
+            label: 'Leave a memory',
+            onPressed: () => Navigator.push(
+              context,
+              SpringPageRoute(page: const CameraScreen()),
+            ),
+          ),
+        ));
+    if (hasInbox) {
+      rows.add(() => Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.md),
+            child: _InboxStrip(
+              readyCount: readyCount,
+              waitingCount: waitingCount,
+              onTap: _openVault,
+            ),
+          ));
+    }
+    rows.add(() => const SizedBox(height: AppSpacing.lg));
+
+    if (_isLoading) {
+      rows.add(() => const Padding(
+            padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+            child: Column(
+              children: [
+                SkeletonMemoryCard(),
+                SizedBox(height: AppSpacing.sm),
+                SkeletonMemoryCard(),
+              ],
+            ),
+          ));
+    } else {
+      rows.add(() => Column(
+            children: [
+              Text(
+                'Memories you left',
+                textAlign: TextAlign.center,
+                style: AppTypography.headlineMd,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Drops you created and shared.',
+                textAlign: TextAlign.center,
+                style: AppTypography.labelSm.copyWith(
+                  color: AppColors.onSurfaceVariant,
+                ),
+              ),
+              // The balance belongs to this section, not to the CTA: it answers
+              // "how many of these can I still make?", which is the question
+              // the list itself raises. Shown even with no memories yet — that
+              // is exactly when a new user wants to know what they have.
+              const SizedBox(height: AppSpacing.sm),
+              Center(
+                child: DropBalanceChip(
+                  onTap: () => Navigator.push(
+                    context,
+                    SpringPageRoute(page: const PaywallScreen()),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+            ],
+          ));
+
+      if (_capsules.isEmpty) {
+        rows.add(() => const Padding(
+              padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
+              child: _EmptyState(),
+            ));
+      }
+
+      for (final capsule in activeShown) {
+        rows.add(() => Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+              child: RepaintBoundary(child: _memoryCard(capsule)),
+            ));
+      }
+
+      if (archived.isNotEmpty) {
+        if (visibleActive.isNotEmpty) {
+          rows.add(() => Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.sm),
+                child: TextButton(
+                  onPressed: () => setState(() => _showEarlier = !_showEarlier),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        earlierExpanded
+                            ? 'Hide earlier drops'
+                            : 'Earlier drops (${archived.length})',
+                        style: AppTypography.labelMd.copyWith(
+                          color: AppColors.primary,
+                        ),
+                      ),
+                      Icon(
+                        earlierExpanded
+                            ? Icons.expand_less
+                            : Icons.expand_more,
+                        color: AppColors.primary,
+                        size: 20,
+                      ),
+                    ],
+                  ),
+                ),
+              ));
+        }
+        for (final capsule in archivedShown) {
+          rows.add(() => Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                child: RepaintBoundary(child: _memoryCard(capsule)),
+              ));
+        }
+      }
+    }
 
     return Scaffold(
       backgroundColor: AppColors.surface,
@@ -326,111 +453,9 @@ class _HomeScreenState extends State<HomeScreen> with ScrollPaginationMixin {
                     AppSpacing.containerMargin,
                     AppSpacing.containerMargin,
                   ),
-                  sliver: SliverList(
-                    delegate: SliverChildListDelegate([
-                      Center(
-                        child: PrimaryButton(
-                          label: 'Leave a Memory',
-                          onPressed: () => Navigator.push(
-                            context,
-                            SpringPageRoute(page: const CameraScreen()),
-                          ),
-                        ),
-                      ),
-                      if (hasInbox) ...[
-                        const SizedBox(height: AppSpacing.md),
-                        _InboxStrip(
-                          readyCount: readyCount,
-                          waitingCount: waitingCount,
-                          onTap: _openVault,
-                        ),
-                      ],
-                      const SizedBox(height: AppSpacing.lg),
-                      if (_isLoading)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
-                          child: Column(
-                            children: [
-                              SkeletonMemoryCard(),
-                              SizedBox(height: AppSpacing.sm),
-                              SkeletonMemoryCard(),
-                            ],
-                          ),
-                        )
-                      else ...[
-                        Text(
-                          'Memories you left',
-                          textAlign: TextAlign.center,
-                          style: AppTypography.headlineMd,
-                        ),
-                        const SizedBox(height: AppSpacing.xs),
-                        Text(
-                          'Drops you created and shared.',
-                          textAlign: TextAlign.center,
-                          style: AppTypography.labelSm.copyWith(
-                            color: AppColors.onSurfaceVariant,
-                          ),
-                        ),
-                        // The balance belongs to this section, not to the CTA:
-                        // it answers "how many of these can I still make?",
-                        // which is the question the list itself raises. Shown
-                        // even with no memories yet — that is exactly when a
-                        // new user wants to know what they have.
-                        const SizedBox(height: AppSpacing.sm),
-                        Center(
-                          child: DropBalanceChip(
-                            onTap: () => Navigator.push(
-                              context,
-                              SpringPageRoute(page: const PaywallScreen()),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.md),
-                        if (_capsules.isEmpty)
-                          const Padding(
-                            padding:
-                                EdgeInsets.symmetric(vertical: AppSpacing.lg),
-                            child: _EmptyState(),
-                          ),
-                        for (final capsule in activeShown) ...[
-                          _memoryCard(capsule),
-                          const SizedBox(height: AppSpacing.sm),
-                        ],
-                        if (archived.isNotEmpty) ...[
-                          const SizedBox(height: AppSpacing.sm),
-                          if (visibleActive.isNotEmpty)
-                            TextButton(
-                              onPressed: () => setState(
-                                () => _showEarlier = !_showEarlier,
-                              ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    earlierExpanded
-                                        ? 'Hide earlier drops'
-                                        : 'Earlier drops (${archived.length})',
-                                    style: AppTypography.labelMd.copyWith(
-                                      color: AppColors.primary,
-                                    ),
-                                  ),
-                                  Icon(
-                                    earlierExpanded
-                                        ? Icons.expand_less
-                                        : Icons.expand_more,
-                                    color: AppColors.primary,
-                                    size: 20,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          for (final capsule in archivedShown) ...[
-                            _memoryCard(capsule),
-                            const SizedBox(height: AppSpacing.sm),
-                          ],
-                        ],
-                      ],
-                    ]),
+                  sliver: SliverList.builder(
+                    itemCount: rows.length,
+                    itemBuilder: (context, i) => rows[i](),
                   ),
                 ),
               ],

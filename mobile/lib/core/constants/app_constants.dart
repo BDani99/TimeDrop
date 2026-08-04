@@ -65,13 +65,17 @@ class AppConstants {
   /// Distance under which the radar enters its "closing in" phase.
   static const double radarClosingMeters = 50;
 
-  /// Compile-time default for where the recipient's map hands over to the
-  /// radar. Server-tunable via `system_settings.radar_switch_meters` — read it
+  /// Compile-time default for where the proximity radar joins the recipient's
+  /// map. Server-tunable via `system_settings.radar_switch_meters` — read it
   /// through [SystemConfig], not from here.
   ///
-  /// Deliberately the same as [radarClosingMeters], so the screen changes at
-  /// the same moment the haptic pulse begins.
-  static const double radarSwitchMeters = 50;
+  /// The radar no longer *replaces* the map, it appears beneath it, so this is
+  /// a reveal distance rather than a switch. That is also why it is 100 m and
+  /// not 50: swapping the screen out early would have been disorienting, but
+  /// adding an instrument early is simply earlier feedback. It matches
+  /// [radarZoneRadiusMeters], so the radar, the warming background and the
+  /// haptic pulse all begin together.
+  static const double radarSwitchMeters = 100;
 
   /// Shown only until the store's own localised prices arrive. The real
   /// figures always come from RevenueCat's `storeProduct.priceString`.

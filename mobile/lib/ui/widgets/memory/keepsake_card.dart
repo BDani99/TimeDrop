@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
+import '../../../core/utils/name_format.dart';
 
 /// The sand-coloured backdrop of the unlock ritual and the keepsake card.
 ///
@@ -93,10 +94,7 @@ class MemoryFacts {
     return (value == null || value.isEmpty) ? null : value;
   }
 
-  String? get sender {
-    final value = fromName?.trim();
-    return (value == null || value.isEmpty) ? null : value;
-  }
+  String? get sender => NameFormat.display(fromName);
 }
 
 /// The block of fact lines shown under the capsule. Static — the unlock

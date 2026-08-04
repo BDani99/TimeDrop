@@ -14,14 +14,14 @@ class SystemConfig {
   double radarZoneRadiusMeters = AppConstants.radarZoneRadiusMeters;
   double unlockProximityMeters = AppConstants.unlockProximityMeters;
 
-  /// Below this the recipient's map gives way to the radar. See migration
-  /// 0028 for why it is tunable.
+  /// Below this the proximity radar appears beneath the recipient's map. See
+  /// migration 0028 for why it is tunable, and 0032 for why it is now 100.
   double radarSwitchMeters = AppConstants.radarSwitchMeters;
 
-  /// Hysteresis band: once the radar is showing, the map only comes back above
-  /// this. Without the gap, GPS jitter around the threshold would flip the
-  /// whole screen back and forth every few seconds.
-  double get mapReturnMeters => radarSwitchMeters * 1.3;
+  /// Hysteresis band: once the radar is showing, it only disappears again
+  /// above this. Without the gap, GPS jitter around the threshold would make
+  /// it flicker in and out every few seconds.
+  double get radarHideMeters => radarSwitchMeters * 1.3;
 
   // `free_drop_limit` is deliberately NOT mirrored here any more. The drop
   // allowance is enforced inside `create_pending_capsule`, and a client-side

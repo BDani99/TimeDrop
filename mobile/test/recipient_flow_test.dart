@@ -1,13 +1,47 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:timedrop_mobile/core/config/system_config.dart';
 import 'package:timedrop_mobile/core/constants/app_constants.dart';
+import 'package:timedrop_mobile/core/utils/name_format.dart';
 import 'package:timedrop_mobile/core/utils/share_link_parser.dart';
 import 'package:timedrop_mobile/ui/screens/unlock_sequence_screen.dart';
 
-/// Covers the three places where the rebuilt recipient flow can fail silently:
-/// a deep link that lost its fragment, a navigation mode that flickers at the
-/// threshold, and an unlock sequence whose beats drift out of order.
+/// Covers the places where the rebuilt recipient flow can fail silently: a deep
+/// link that lost its fragment, a radar that flickers at the threshold, an
+/// unlock sequence whose beats drift out of order, and a sender's name landing
+/// mid-sentence in whatever shape it was typed.
 void main() {
+  group('NameFormat.display', () {
+    test('a name typed in lower case is capitalised for the sentence it '
+        'lands in', () {
+      // The bug this exists for: "dani left you a memory."
+      expect(NameFormat.display('dani'), 'Dani');
+    });
+
+    test('surrounding and repeated whitespace is normalised', () {
+      expect(NameFormat.display('  anna   maria \n'), 'Anna maria');
+    });
+
+    test('only the first letter is touched, so deliberate casing survives', () {
+      expect(NameFormat.display('McKay'), 'McKay');
+      expect(NameFormat.display('de Souza'), 'De Souza');
+    });
+
+    test('an absent or blank name yields null rather than an empty sentence',
+        () {
+      expect(NameFormat.display(null), isNull);
+      expect(NameFormat.display(''), isNull);
+      expect(NameFormat.display('   '), isNull);
+    });
+
+    test('an overlong name is clipped so it cannot break the line it sits in',
+        () {
+      final result = NameFormat.display('a' * 60)!;
+
+      expect(result.length, lessThanOrEqualTo(NameFormat.maxLength + 1));
+      expect(result, endsWith('…'));
+    });
+  });
+
   group('ShareLinkParser.parseParts', () {
     test('a complete link still parses into a usable ShareLinkModel', () {
       final key = 'A' * 43;
@@ -82,32 +116,31 @@ void main() {
     });
   });
 
-  group('Macro/micro switch hysteresis', () {
+  group('Radar reveal hysteresis', () {
     tearDown(() {
       SystemConfig.instance.radarSwitchMeters = AppConstants.radarSwitchMeters;
     });
 
-    test('the map only returns at a greater distance than the radar takes over',
-        () {
+    test('the radar only disappears at a greater distance than it appears', () {
       final config = SystemConfig.instance;
 
-      // Without the gap, a GPS fix bouncing across the threshold would swap
-      // the entire screen back and forth every few seconds.
-      expect(config.mapReturnMeters, greaterThan(config.radarSwitchMeters));
+      // Without the gap, a GPS fix bouncing across the threshold would make
+      // the radar flicker in and out every few seconds.
+      expect(config.radarHideMeters, greaterThan(config.radarSwitchMeters));
     });
 
     test('the dead band is wide enough to absorb ordinary GPS jitter', () {
       final config = SystemConfig.instance;
-      final band = config.mapReturnMeters - config.radarSwitchMeters;
+      final band = config.radarHideMeters - config.radarSwitchMeters;
 
       expect(band, greaterThanOrEqualTo(10));
     });
 
-    test('a server-tuned switch distance keeps its hysteresis', () {
+    test('a server-tuned reveal distance keeps its hysteresis', () {
       SystemConfig.instance.apply(radarSwitchMeters: 80);
 
       expect(SystemConfig.instance.radarSwitchMeters, 80);
-      expect(SystemConfig.instance.mapReturnMeters, greaterThan(80));
+      expect(SystemConfig.instance.radarHideMeters, greaterThan(80));
     });
 
     test('a nonsensical server value is ignored rather than applied', () {
@@ -116,6 +149,17 @@ void main() {
       expect(
         SystemConfig.instance.radarSwitchMeters,
         AppConstants.radarSwitchMeters,
+      );
+    });
+
+    test('the radar, the warming background and the pulse all begin together',
+        () {
+      // The reveal distance, the heat-colour zone and the haptic heartbeat are
+      // three separate mechanisms that are meant to read as one event. Keeping
+      // them on the same number is the whole reason it moved to 100.
+      expect(
+        AppConstants.radarSwitchMeters,
+        AppConstants.radarZoneRadiusMeters,
       );
     });
   });

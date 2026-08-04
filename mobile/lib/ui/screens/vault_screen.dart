@@ -17,6 +17,7 @@ import '../../providers/vault_provider.dart';
 import '../../services/clipboard_service.dart';
 import '../../services/media_cache_service.dart';
 import '../widgets/app_snackbar.dart';
+import '../utils/route_transition.dart';
 import '../utils/scroll_pagination.dart';
 import '../widgets/loading/skeleton_box.dart';
 import '../widgets/memory/keepsake_card.dart';
@@ -34,6 +35,26 @@ import '../widgets/navigation/spring_page_route.dart';
 
 enum VaultView { timeline, map, calendar }
 
+/// A cover photo decoded at the size it is actually drawn at.
+///
+/// These are full-resolution capture JPEGs. Handing one to `Image.memory`
+/// unresized makes Flutter decode every pixel of it into a 92-logical-pixel
+/// box — several megabytes of raster work per card, on the frame the card
+/// first scrolls into view. [ResizeImage] moves that decode down to the size
+/// on screen, and keeps the cache key stable so `precacheImage` and the widget
+/// share one entry instead of decoding twice.
+ImageProvider thumbnailProvider(
+  Uint8List bytes,
+  double devicePixelRatio, {
+  double logicalWidth = 92,
+}) {
+  return ResizeImage(
+    MemoryImage(bytes),
+    width: (logicalWidth * devicePixelRatio).round(),
+    policy: ResizeImagePolicy.fit,
+  );
+}
+
 /// The recipient's "Vault": an immersive timeline / map of received memories,
 /// with manual redemption, progressive-auth protection, and an upsell hook.
 class VaultScreen extends StatefulWidget {
@@ -45,6 +66,12 @@ class VaultScreen extends StatefulWidget {
 
 class _VaultScreenState extends State<VaultScreen> with ScrollPaginationMixin {
   VaultView _view = VaultView.timeline;
+
+  /// Which views have ever been selected. An [IndexedStack] builds and keeps
+  /// every child, so without this the map fetches its tiles and every pin
+  /// starts its own repeating animation the moment the Vault opens — all of it
+  /// competing with the timeline the user is actually scrolling.
+  final Set<VaultView> _visitedViews = {VaultView.timeline};
   String? _reopeningCapsuleId;
   bool _thumbnailsWarmed = false;
   bool _started = false;
@@ -54,6 +81,7 @@ class _VaultScreenState extends State<VaultScreen> with ScrollPaginationMixin {
   /// leaving and returning to the Vault does not replay the welcome.
   String? _highlightCapsuleId;
   final GlobalKey _highlightKey = GlobalKey();
+  final ScrollController _timelineController = ScrollController();
 
   /// Fully-resolved unlocked-card previews (cover bytes + note text) keyed by
   /// `capsuleId`. Populated by `_warmThumbnails` before the timeline renders
@@ -84,13 +112,14 @@ class _VaultScreenState extends State<VaultScreen> with ScrollPaginationMixin {
   /// Reads every unlocked card's cover photo + cached note in parallel, then
   /// `precacheImage`s each cover so the first paint is instant.
   Future<void> _warmThumbnails(List<ReceivedCapsuleModel> items) async {
+    final scale = MediaQuery.devicePixelRatioOf(context);
     final results = await Future.wait([
       for (final item in items.where((c) => c.isOpened))
         () async {
           final cover = await MediaCacheService.coverPhoto(item.capsuleId);
           final note = await MediaCacheService.noteFor(item.capsuleId);
           if (cover != null && mounted) {
-            await precacheImage(MemoryImage(cover), context);
+            await precacheImage(thumbnailProvider(cover, scale), context);
           }
           return MapEntry(
             item.capsuleId,
@@ -104,29 +133,13 @@ class _VaultScreenState extends State<VaultScreen> with ScrollPaginationMixin {
       ..addEntries(results);
   }
 
-  String? get _userId => context.read<AuthProvider>().userId;
-
-  Future<void> _waitForIncomingTransition() async {
-    final animation = ModalRoute.of(context)?.animation;
-    if (animation == null || animation.isCompleted) return;
-
-    final done = Completer<void>();
-    void listener(AnimationStatus status) {
-      if (status == AnimationStatus.completed ||
-          status == AnimationStatus.dismissed) {
-        animation.removeStatusListener(listener);
-        if (!done.isCompleted) done.complete();
-      }
-    }
-
-    animation.addStatusListener(listener);
-    // Safety if the status never fires (e.g. interrupted).
-    await Future.any([
-      done.future,
-      Future<void>.delayed(const Duration(milliseconds: 400)),
-    ]);
-    animation.removeStatusListener(listener);
+  @override
+  void dispose() {
+    _timelineController.dispose();
+    super.dispose();
   }
+
+  String? get _userId => context.read<AuthProvider>().userId;
 
   Future<void> _load() async {
     final userId = _userId;
@@ -145,7 +158,7 @@ class _VaultScreenState extends State<VaultScreen> with ScrollPaginationMixin {
       if (!mounted) return;
       // Wait for the incoming route transition so the thumbnail decode/precache
       // doesn't compete with the animation compositor.
-      await _waitForIncomingTransition();
+      await waitForRouteTransition(context);
       if (!mounted) return;
       await _warmThumbnails(provider.receivedCapsules);
     } catch (e) {
@@ -180,16 +193,39 @@ class _VaultScreenState extends State<VaultScreen> with ScrollPaginationMixin {
       );
     }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _revealHighlight());
+  }
+
+  /// Walks the timeline down until the highlighted card exists, then centres it.
+  ///
+  /// Being inside the pagination window is necessary but not sufficient: the
+  /// list is lazy, so a row well below the fold has not been laid out and has
+  /// no context for [Scrollable.ensureVisible] to work with. Scrolling roughly
+  /// a viewport at a time builds the rows on the way, and the walk doubles as
+  /// the arrival animation — the vault visibly travels to the memory.
+  Future<void> _revealHighlight() async {
+    for (var step = 0; step < 12; step++) {
+      if (!mounted) return;
       final target = _highlightKey.currentContext;
-      if (!mounted || target == null) return;
-      Scrollable.ensureVisible(
-        target,
-        duration: const Duration(milliseconds: 450),
-        curve: Curves.easeOutCubic,
-        alignment: 0.25,
+      if (target != null && target.mounted) {
+        await Scrollable.ensureVisible(
+          target,
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeOutCubic,
+          alignment: 0.25,
+        );
+        return;
+      }
+      if (!_timelineController.hasClients) return;
+      final position = _timelineController.position;
+      if (position.extentAfter <= 1) return; // Already at the end; not here.
+      await _timelineController.animateTo(
+        (position.pixels + position.viewportDimension * 0.9)
+            .clamp(0.0, position.maxScrollExtent),
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.linear,
       );
-    });
+    }
   }
 
   void _openRadar(ReceivedCapsuleModel item) {
@@ -273,6 +309,10 @@ class _VaultScreenState extends State<VaultScreen> with ScrollPaginationMixin {
             capturedAt: item.capsuleCreatedAt ?? item.unlockTime,
             latitude: item.latitude,
             longitude: item.longitude,
+            // A replay opens paused, in the gallery. Someone reopening an old
+            // memory may have come for a photo, not the video — starting it
+            // for them takes that choice away.
+            autoPlay: false,
             // The keepsake card stays with the memory: it is the last page
             // here too, drawn from what was written down at first view.
             facts: MemoryFacts(
@@ -335,6 +375,16 @@ class _VaultScreenState extends State<VaultScreen> with ScrollPaginationMixin {
     }
   }
 
+  /// One slot of the view stack. A view that has never been opened is not built
+  /// at all; once opened it stays built (so the map keeps its tiles and its
+  /// scroll position), but its animations are frozen whenever it is not the
+  /// selected view — an [IndexedStack] hides its other children without ever
+  /// stopping their tickers.
+  Widget _keptAlive(VaultView view, Widget Function() builder) {
+    if (!_visitedViews.contains(view)) return const SizedBox.shrink();
+    return TickerMode(enabled: _view == view, child: builder());
+  }
+
   @override
   Widget build(BuildContext context) {
     final vault = context.watch<VaultProvider>();
@@ -348,7 +398,7 @@ class _VaultScreenState extends State<VaultScreen> with ScrollPaginationMixin {
         backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         icon: const Icon(Icons.vpn_key_outlined),
-        label: const Text('Redeem a Drop'),
+        label: const Text('Redeem a drop'),
       ),
       appBar: AppBar(
         title: const Text('The Vault'),
@@ -375,7 +425,10 @@ class _VaultScreenState extends State<VaultScreen> with ScrollPaginationMixin {
                 ),
               ],
               selected: {_view},
-              onSelectionChanged: (s) => setState(() => _view = s.first),
+              onSelectionChanged: (s) => setState(() {
+                _view = s.first;
+                _visitedViews.add(_view);
+              }),
             ),
           ),
         ),
@@ -386,40 +439,50 @@ class _VaultScreenState extends State<VaultScreen> with ScrollPaginationMixin {
               index: _view.index,
               sizing: StackFit.expand,
               children: [
-                _TimelineView(
-                  vault: vault,
-                  reopeningCapsuleId: _reopeningCapsuleId,
-                  onRefresh: _refresh,
-                  onOpenReceived: _openReceived,
-                  onReopen: _reopen,
-                  onOpenDetail: _openDetail,
-                  previews: _previews,
-                  highlightCapsuleId: _highlightCapsuleId,
-                  highlightKey: _highlightKey,
-                  visibleCount: visibleCount,
-                  onScroll: (n, total) =>
-                      handleScrollForPagination(n, total),
+                _keptAlive(
+                  VaultView.timeline,
+                  () => _TimelineView(
+                    vault: vault,
+                    reopeningCapsuleId: _reopeningCapsuleId,
+                    onRefresh: _refresh,
+                    onOpenReceived: _openReceived,
+                    onReopen: _reopen,
+                    onOpenDetail: _openDetail,
+                    previews: _previews,
+                    highlightCapsuleId: _highlightCapsuleId,
+                    highlightKey: _highlightKey,
+                    scrollController: _timelineController,
+                    visibleCount: visibleCount,
+                    onScroll: (n, total) =>
+                        handleScrollForPagination(n, total),
+                  ),
                 ),
-                _MapView(
-                  vault: vault,
-                  onOpenReceived: _openReceived,
-                  onReopen: _reopen,
+                _keptAlive(
+                  VaultView.map,
+                  () => _MapView(
+                    vault: vault,
+                    onOpenReceived: _openReceived,
+                    onReopen: _reopen,
+                  ),
                 ),
-                VaultCalendarView(
-                  items: vault.receivedCapsules,
-                  onSelect: (ReceivedCapsuleModel item) {
-                    if (item.isOpened) {
-                      _reopen(item);
-                    } else if (item.hasKey) {
-                      _openReceived(item);
-                    } else {
-                      _openDetail(
-                        item,
-                        actionLabel: 'Close',
-                        onAction: () {},
-                      );
-                    }
-                  },
+                _keptAlive(
+                  VaultView.calendar,
+                  () => VaultCalendarView(
+                    items: vault.receivedCapsules,
+                    onSelect: (ReceivedCapsuleModel item) {
+                      if (item.isOpened) {
+                        _reopen(item);
+                      } else if (item.hasKey) {
+                        _openReceived(item);
+                      } else {
+                        _openDetail(
+                          item,
+                          actionLabel: 'Close',
+                          onAction: () {},
+                        );
+                      }
+                    },
+                  ),
                 ),
               ],
             ),
@@ -461,6 +524,7 @@ class _TimelineView extends StatelessWidget {
     required this.previews,
     required this.highlightCapsuleId,
     required this.highlightKey,
+    required this.scrollController,
     required this.visibleCount,
     required this.onScroll,
   });
@@ -477,6 +541,10 @@ class _TimelineView extends StatelessWidget {
   /// highlighted, with the upsell moved directly beneath it.
   final String? highlightCapsuleId;
   final GlobalKey highlightKey;
+
+  /// Owned by the screen, not this view, because the arrival scroll has to be
+  /// driven from outside the build that produces the rows.
+  final ScrollController scrollController;
 
   /// How many memory cards may be built, across all three sections. Section
   /// headers do not count against it — they are cheap, and a header with no
@@ -516,28 +584,37 @@ class _TimelineView extends StatelessWidget {
     final total =
         vault.ready.length + vault.waiting.length + vault.opened.length;
 
-    return NotificationListener<ScrollNotification>(
-      onNotification: (n) => onScroll(n, total),
-      child: RefreshIndicator(
-      color: AppColors.primary,
-      onRefresh: onRefresh,
-      child: ListView(
-        padding: const EdgeInsets.all(AppSpacing.containerMargin),
-        children: [
-          if (vault.unlockedCount > 0) ...[
-            _StatHeader(moments: vault.unlockedCount, cities: vault.cityCount),
-            const SizedBox(height: AppSpacing.md),
-          ],
-          if (showHighStakes) ...[
-            const _HighStakesBanner(),
-            const SizedBox(height: AppSpacing.md),
-          ],
-          if (vault.isLoading && vault.receivedCapsules.isEmpty)
-            const SkeletonMemoryCard(),
-          if (readyShown.isNotEmpty) ...[
-            _SectionLabel('Ready to open'),
-            for (final item in readyShown) ...[
-              RepaintBoundary(
+    // Rows are collected as builders rather than widgets so `ListView.builder`
+    // can do its job: only what is on screen gets built. Built eagerly, a
+    // pagination bump — which fires mid-scroll — re-created every card in the
+    // vault to add five, and the cost landed on the frame being dragged.
+    final rows = <Widget Function()>[];
+
+    if (vault.unlockedCount > 0) {
+      rows.add(() => Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.md),
+            child: _StatHeader(
+              moments: vault.unlockedCount,
+              cities: vault.cityCount,
+            ),
+          ));
+    }
+    if (showHighStakes) {
+      rows.add(() => const Padding(
+            padding: EdgeInsets.only(bottom: AppSpacing.md),
+            child: _HighStakesBanner(),
+          ));
+    }
+    if (vault.isLoading && vault.receivedCapsules.isEmpty) {
+      rows.add(() => const SkeletonMemoryCard());
+    }
+
+    if (readyShown.isNotEmpty) {
+      rows.add(() => _SectionLabel('Ready to open'));
+      for (final item in readyShown) {
+        rows.add(() => Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+              child: RepaintBoundary(
                 child: _ReadyCard(
                   item: item,
                   onTap: () => onOpenReceived(item),
@@ -548,26 +625,34 @@ class _TimelineView extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: AppSpacing.sm),
-            ],
-            const SizedBox(height: AppSpacing.md),
-          ],
-          if (waitingShown.isNotEmpty) ...[
-            _SectionLabel('Waiting'),
-            for (final item in waitingShown) ...[
-              _WaitingCard(
-                item: item,
-                // Waiting + key → gift intro (countdown). Ready uses radar.
-                onTap: item.hasKey ? () => onOpenReceived(item) : null,
+            ));
+      }
+      rows.add(() => const SizedBox(height: AppSpacing.md));
+    }
+
+    if (waitingShown.isNotEmpty) {
+      rows.add(() => _SectionLabel('Waiting'));
+      for (final item in waitingShown) {
+        rows.add(() => Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+              child: RepaintBoundary(
+                child: _WaitingCard(
+                  item: item,
+                  // Waiting + key → gift intro (countdown). Ready uses radar.
+                  onTap: item.hasKey ? () => onOpenReceived(item) : null,
+                ),
               ),
-              const SizedBox(height: AppSpacing.sm),
-            ],
-            const SizedBox(height: AppSpacing.md),
-          ],
-          if (openedShown.isNotEmpty) ...[
-            _SectionLabel('Opened'),
-            for (final item in openedShown) ...[
-              RepaintBoundary(
+            ));
+      }
+      rows.add(() => const SizedBox(height: AppSpacing.md));
+    }
+
+    if (openedShown.isNotEmpty) {
+      rows.add(() => _SectionLabel('Opened'));
+      for (final item in openedShown) {
+        rows.add(() => Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+              child: RepaintBoundary(
                 child: KeyedSubtree(
                   key: item.capsuleId == highlighted ? highlightKey : null,
                   child: NewMemoryHighlight(
@@ -587,31 +672,49 @@ class _TimelineView extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(height: AppSpacing.sm),
-              if (showInlineUpsell && item.capsuleId == highlighted) ...[
-                const _KeepSafeCard(),
-                const SizedBox(height: AppSpacing.sm),
-              ],
-            ],
-          ],
-          if (!vault.isLoading &&
-              vault.ready.isEmpty &&
-              vault.waiting.isEmpty &&
-              vault.opened.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
-              child: Text(
-                'Your vault is empty — memories others send you will appear here.',
-                textAlign: TextAlign.center,
-                style: AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
-              ),
+            ));
+        if (showInlineUpsell && item.capsuleId == highlighted) {
+          rows.add(() => const Padding(
+                padding: EdgeInsets.only(bottom: AppSpacing.sm),
+                child: _KeepSafeCard(),
+              ));
+        }
+      }
+    }
+
+    if (!vault.isLoading &&
+        vault.ready.isEmpty &&
+        vault.waiting.isEmpty &&
+        vault.opened.isEmpty) {
+      rows.add(() => Padding(
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+            child: Text(
+              'Your vault is empty — memories others send you will appear here.',
+              textAlign: TextAlign.center,
+              style:
+                  AppTypography.bodyMd.copyWith(color: AppColors.onSurfaceVariant),
             ),
-          if (!isPremium && !showInlineUpsell) ...[
-            const SizedBox(height: AppSpacing.md),
-            const _FreemiumBanner(),
-          ],
-        ],
-      ),
+          ));
+    }
+
+    if (!isPremium && !showInlineUpsell) {
+      rows.add(() => const Padding(
+            padding: EdgeInsets.only(top: AppSpacing.md),
+            child: _FreemiumBanner(),
+          ));
+    }
+
+    return NotificationListener<ScrollNotification>(
+      onNotification: (n) => onScroll(n, total),
+      child: RefreshIndicator(
+        color: AppColors.primary,
+        onRefresh: onRefresh,
+        child: ListView.builder(
+          controller: scrollController,
+          padding: const EdgeInsets.all(AppSpacing.containerMargin),
+          itemCount: rows.length,
+          itemBuilder: (context, i) => rows[i](),
+        ),
       ),
     );
   }
@@ -804,7 +907,11 @@ class _FreemiumBanner extends StatelessWidget {
               context,
               SpringPageRoute(page: const PaywallScreen()),
             ),
-            child: const Text('Unlock Lifetime Access'),
+            // Not "Unlock Lifetime Access": this button opens a paywall selling
+            // a monthly and an annual subscription. Nothing here is bought once
+            // and kept forever, and saying so is both untrue to the user and a
+            // store review problem.
+            child: const Text('See TimeDrop Pro'),
           ),
         ],
       ),
@@ -869,7 +976,10 @@ class _ReadyCardState extends State<_ReadyCard> with SingleTickerProviderStateMi
                     Text(
                       widget.item.hasBeenUnlockedAtLocation
                           ? 'You found it — tap to finish opening.'
-                          : 'Ready to discover. Tap to open Radar.',
+                          // "Radar" named a mode that no longer exists on its
+                          // own — the finding screen is a map now, with the
+                          // radar joining it near the end.
+                          : 'Ready to discover. Tap to find it.',
                       style: AppTypography.labelSm.copyWith(color: Colors.white70),
                     ),
                   ],
@@ -993,7 +1103,14 @@ class _UnlockedCard extends StatelessWidget {
               width: 92,
               height: 92,
               child: cover != null
-                  ? Image.memory(cover, fit: BoxFit.cover, gaplessPlayback: true)
+                  ? Image(
+                      image: thumbnailProvider(
+                        cover,
+                        MediaQuery.devicePixelRatioOf(context),
+                      ),
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                    )
                   : Container(
                       color: AppColors.surfaceContainerHigh,
                       child: const Icon(Icons.play_circle_outline,
@@ -1170,7 +1287,14 @@ class _CoverMarker extends StatelessWidget {
             shape: BoxShape.circle,
             border: Border.all(color: AppColors.primary, width: 2),
             image: cover != null
-                ? DecorationImage(image: MemoryImage(cover), fit: BoxFit.cover)
+                ? DecorationImage(
+                    image: thumbnailProvider(
+                      cover,
+                      MediaQuery.devicePixelRatioOf(context),
+                      logicalWidth: 48,
+                    ),
+                    fit: BoxFit.cover,
+                  )
                 : null,
             color: cover == null ? AppColors.primary : null,
           ),
@@ -1239,13 +1363,26 @@ class _RedeemSheet extends StatefulWidget {
 
 class _RedeemSheetState extends State<_RedeemSheet> {
   final TextEditingController _controller = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
   bool _busy = false;
 
   @override
   void initState() {
     super.initState();
-    // Clipboard prefill runs after the sheet has already opened — instant tap response.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _prefillClipboard());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _settleThenPrepare());
+  }
+
+  /// Everything that costs a frame happens *after* the sheet has finished
+  /// sliding up. Autofocusing raises the keyboard on top of the sheet
+  /// animation, and reading the clipboard is a platform-channel round trip —
+  /// doing either while the sheet is still moving is what made the tap stutter.
+  Future<void> _settleThenPrepare() async {
+    if (!mounted) return;
+    await waitForRouteTransition(context);
+    if (!mounted) return;
+    await _prefillClipboard();
+    if (!mounted) return;
+    _focusNode.requestFocus();
   }
 
   Future<void> _prefillClipboard() async {
@@ -1260,6 +1397,7 @@ class _RedeemSheetState extends State<_RedeemSheet> {
 
   @override
   void dispose() {
+    _focusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -1312,12 +1450,12 @@ class _RedeemSheetState extends State<_RedeemSheet> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            Text('Redeem a Drop', style: AppTypography.headlineMd, textAlign: TextAlign.center),
+            Text('Redeem a drop', style: AppTypography.headlineMd, textAlign: TextAlign.center),
             const SizedBox(height: AppSpacing.sm),
             TextField(
               controller: _controller,
+              focusNode: _focusNode,
               textCapitalization: TextCapitalization.characters,
-              autofocus: true,
               decoration: const InputDecoration(hintText: 'Paste the link or enter the code'),
               onSubmitted: (_) => _submit(),
             ),
