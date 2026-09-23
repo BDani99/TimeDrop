@@ -18,7 +18,7 @@ values (
   to_jsonb(
     encode(
       extensions.digest(
-        'ReviewPassword10_' || (
+        '<PASSCODE>' || (
           select setting_value #>> '{}'
             from public.secret_settings
            where setting_key = 'reviewer_passcode_salt'
