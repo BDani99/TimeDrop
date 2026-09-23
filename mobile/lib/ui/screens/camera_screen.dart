@@ -104,6 +104,12 @@ class _CameraBodyState extends State<_CameraBody> with TickerProviderStateMixin 
   _FlashState _flash = _FlashState.off;
 
   bool _isRecording = false;
+  // Guards the async gap inside _startRecording/_stopRecording, set
+  // synchronously before their first await — a rapid double-tap on the
+  // record button otherwise lands inside that gap, where _isRecording hasn't
+  // flipped yet, and calls startVideoRecording/stopVideoRecording on the
+  // plugin a second time.
+  bool _recordingBusy = false;
   bool _isSwitching = false;
   DateTime? _recordingStart;
   Timer? _autoStopTimer;
@@ -223,7 +229,8 @@ class _CameraBodyState extends State<_CameraBody> with TickerProviderStateMixin 
 
   Future<void> _startRecording() async {
     final controller = _controller;
-    if (controller == null || _isRecording) return;
+    if (controller == null || _isRecording || _recordingBusy) return;
+    _recordingBusy = true;
     try {
       await controller.startVideoRecording();
       _recordingStart = DateTime.now();
@@ -236,12 +243,15 @@ class _CameraBodyState extends State<_CameraBody> with TickerProviderStateMixin 
       _autoStopTimer = Timer(AppConstants.maxRecordingDuration, _stopRecording);
     } catch (e) {
       if (mounted) AppSnackbar.showError(context, e);
+    } finally {
+      _recordingBusy = false;
     }
   }
 
   Future<void> _stopRecording() async {
     final controller = _controller;
-    if (controller == null || !_isRecording) return;
+    if (controller == null || !_isRecording || _recordingBusy) return;
+    _recordingBusy = true;
     _autoStopTimer?.cancel();
     _ringController.stop();
     _ringController.reset();
@@ -270,6 +280,8 @@ class _CameraBodyState extends State<_CameraBody> with TickerProviderStateMixin 
         setState(() => _isRecording = false);
         AppSnackbar.showError(context, e);
       }
+    } finally {
+      _recordingBusy = false;
     }
   }
 
