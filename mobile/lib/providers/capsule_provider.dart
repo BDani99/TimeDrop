@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException;
 import '../core/config/system_config.dart';
 import '../core/constants/app_constants.dart';
 import '../core/errors/app_exception.dart';
+import '../core/errors/error_mapper.dart';
 import '../models/capsule_metadata.dart';
 import '../models/capsule_model.dart';
 import '../services/crypto_service.dart';
@@ -251,6 +252,11 @@ class CapsuleProvider extends ChangeNotifier {
   Future<void> resumePendingUploads() async {
     final jobs = await UploadQueueService.pending();
     for (final job in jobs) {
+      // A concurrent call (e.g. this same method firing again before the
+      // first pass finished, or racing a manual retryUpload) must not start
+      // a second upload of the same job.
+      if (_uploadStates[job.capsuleId] == CapsuleUploadState.uploading) continue;
+
       // If the payload is already saved we only need network for the DB write,
       // so the media file check is irrelevant — skip the exhaustion guard only
       // when upload already succeeded.
@@ -282,6 +288,9 @@ class CapsuleProvider extends ChangeNotifier {
 
   /// Manually retries a previously-failed upload from its persisted job.
   Future<void> retryUpload(String capsuleId) async {
+    // A double-tap on "Retry" before the UI rebuilds must not start a
+    // second concurrent upload of the same capsule.
+    if (_uploadStates[capsuleId] == CapsuleUploadState.uploading) return;
     final jobs = await UploadQueueService.pending();
     UploadJob? job;
     for (final j in jobs) {
@@ -582,7 +591,7 @@ class CapsuleProvider extends ChangeNotifier {
             _unlockInFlight = false;
           }
         } catch (e) {
-          unlockError = e.toString();
+          unlockError = mapErrorToMessage(e);
           _unlockInFlight = false;
         }
       } else if (capsule.isUnlocked) {
