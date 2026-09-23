@@ -11,8 +11,14 @@ import { storeUrlForCurrentOS } from '../utils/osDetector';
 // *asks* whether to open what it found. It never reads it silently.
 export default function GetTheAppButton() {
   const [copied, setCopied] = useState(false);
+  const [pending, setPending] = useState(false);
 
   async function handleClick() {
+    // Without this, a double-tap while the clipboard copy / handoff timer is
+    // still in flight re-invokes the whole flow — re-copying the clipboard
+    // and stacking a second navigation on top of the first.
+    if (pending) return;
+    setPending(true);
     const success = await copyCurrentUrl();
     setCopied(success);
     window.setTimeout(
@@ -26,7 +32,8 @@ export default function GetTheAppButton() {
   return (
     <button
       onClick={handleClick}
-      className="mt-3 w-full rounded-full border px-8 py-3 text-sm font-semibold transition-transform duration-200 hover:scale-[1.02] active:scale-[0.98]"
+      disabled={pending}
+      className="mt-3 w-full rounded-full border px-8 py-3 text-sm font-semibold transition-transform duration-200 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-70"
       style={{
         borderColor: 'var(--color-outline-variant)',
         color: 'var(--color-primary)',
