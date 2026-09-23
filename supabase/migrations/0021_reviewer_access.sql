@@ -17,7 +17,7 @@
 -- This migration deliberately arms nothing. It creates the salt and leaves the
 -- kill switch OFF. Committing the passcode — even hashed, and especially in
 -- plaintext — puts it in every clone of the repository forever. An operator
--- sets it once by hand; see supabase/scripts/set_reviewer_passcode.sql.example.
+-- sets it once by hand, directly via the Supabase dashboard SQL editor or psql.
 --
 -- `reviewer_flags` itself is created in 0020, because create_pending_capsule()
 -- must consult it to let a reviewer bypass the quota server-side.

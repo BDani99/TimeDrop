@@ -35,8 +35,7 @@ class Env {
   // be compiled into the binary, where anyone could extract it and it could
   // only be changed or revoked by shipping a new build. It now lives in the
   // `secret_settings` table, is compared server-side against a salted hash,
-  // is rate-limited, and has a remote kill switch. See migration 0021 and
-  // supabase/scripts/set_reviewer_passcode.sql.example.
+  // is rate-limited, and has a remote kill switch. See migration 0021.
 
   static bool get isRevenueCatConfigured =>
       revenueCatApiKeyIos.isNotEmpty || revenueCatApiKeyAndroid.isNotEmpty;
