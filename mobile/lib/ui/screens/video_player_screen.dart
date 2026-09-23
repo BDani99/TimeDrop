@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../core/constants/app_constants.dart';
 import '../../core/haptics/app_haptics.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
@@ -208,7 +209,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         // keepsake card has to be able to say it again years later, and the
         // radar's reading is gone the moment this screen appears.
         unlockDistanceMeters: widget.facts?.distanceMeters,
-      );
+      ).timeout(AppConstants.dbCallTimeout);
     } catch (_) {
       // Non-fatal for playback.
     }

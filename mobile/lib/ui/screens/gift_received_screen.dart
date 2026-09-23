@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/constants/app_constants.dart';
 import '../../core/errors/app_exception.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_spacing.dart';
@@ -75,7 +76,8 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
         throw const AuthException('You need to be signed in to receive this memory.');
       }
 
-      final capsule = await SupabaseService.fetchCapsuleByShareId(widget.shareId);
+      final capsule = await SupabaseService.fetchCapsuleByShareId(widget.shareId)
+          .timeout(AppConstants.dbCallTimeout);
       if (capsule == null) {
         throw const CapsuleException('This memory could not be found.');
       }
@@ -98,7 +100,7 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
         encryptionKey: _encryptionKey,
         fromName: widget.fromName,
         capsuleCreatedAt: capsule.createdAt,
-      );
+      ).timeout(AppConstants.dbCallTimeout);
 
       if (!mounted) return;
       setState(() {
@@ -151,7 +153,7 @@ class _GiftReceivedScreenState extends State<GiftReceivedScreen> {
           encryptionKey: parsed.encryptionKey,
           fromName: widget.fromName ?? parsed.fromName,
           capsuleCreatedAt: capsule.createdAt,
-        );
+        ).timeout(AppConstants.dbCallTimeout);
       } catch (e) {
         if (mounted) AppSnackbar.showError(context, e);
       }

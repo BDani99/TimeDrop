@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../glass/glass_bottom_sheet.dart';
+import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_spacing.dart';
 import '../../../core/theme/app_typography.dart';
@@ -80,7 +81,7 @@ class _MemorySavedModalState extends State<MemorySavedModal> {
       userId: userId,
       capsuleId: capsuleId,
       encryptionKey: key,
-    );
+    ).timeout(AppConstants.dbCallTimeout);
   }
 
   @override

@@ -149,7 +149,7 @@ class AuthProvider extends ChangeNotifier {
     String? grantToken;
     if (wasAnonymous && previousId != null) {
       try {
-        grantToken = await SupabaseService.requestMergeGrant();
+        grantToken = await SupabaseService.requestMergeGrant().timeout(AppConstants.dbCallTimeout);
       } catch (e) {
         debugPrint('Could not pre-authorize the account merge: $e');
       }
@@ -165,11 +165,13 @@ class AuthProvider extends ChangeNotifier {
     }
 
     try {
-      final response = await SupabaseService.client.auth.signInWithIdToken(
-        provider: credential.provider,
-        idToken: credential.idToken,
-        accessToken: credential.accessToken,
-      );
+      final response = await SupabaseService.client.auth
+          .signInWithIdToken(
+            provider: credential.provider,
+            idToken: credential.idToken,
+            accessToken: credential.accessToken,
+          )
+          .timeout(AppConstants.dbCallTimeout);
       final linked = response.user;
       if (linked == null) {
         throw const AuthException('Sign-in did not return an account.');
@@ -233,10 +235,13 @@ class AuthProvider extends ChangeNotifier {
 
     for (var attempt = 0; attempt <= backoff.length; attempt++) {
       try {
+        // Bounded per attempt — this loop's whole point is to retry a
+        // transient failure quickly, which an unbounded hang on the first
+        // attempt would silently defeat.
         await SupabaseService.mergeAnonymousAccount(
           anonymousUserId: anonymousUserId,
           mergeGrantToken: token,
-        );
+        ).timeout(AppConstants.dbCallTimeout);
         await LocalPrefsService.clearPendingMerge();
         hasUnfinishedMerge = false;
         notifyListeners();
@@ -260,7 +265,8 @@ class AuthProvider extends ChangeNotifier {
   /// worse than briefly keeping it.
   Future<void> refreshReviewerStatus() async {
     try {
-      final granted = await SupabaseService.checkReviewerStatus();
+      final granted =
+          await SupabaseService.checkReviewerStatus().timeout(AppConstants.dbCallTimeout);
       if (granted == isReviewer) return;
       isReviewer = granted;
       notifyListeners();
@@ -272,7 +278,8 @@ class AuthProvider extends ChangeNotifier {
   /// Returns false for a wrong passcode; throws only if the check could not be
   /// performed at all.
   Future<bool> submitReviewerPasscode(String code) async {
-    final granted = await SupabaseService.submitReviewerPasscode(code);
+    final granted =
+        await SupabaseService.submitReviewerPasscode(code).timeout(AppConstants.dbCallTimeout);
     if (granted) {
       isReviewer = true;
       notifyListeners();
@@ -286,7 +293,7 @@ class AuthProvider extends ChangeNotifier {
   /// account keeps everything; signing back in restores it.
   Future<void> signOut() async {
     try {
-      await SupabaseService.signOut();
+      await SupabaseService.signOut().timeout(AppConstants.dbCallTimeout);
     } catch (e) {
       // A failed server sign-out still leaves us wanting a clean local slate.
       debugPrint('Sign-out failed, continuing with a fresh session: $e');
@@ -296,7 +303,7 @@ class AuthProvider extends ChangeNotifier {
     hasUnfinishedMerge = false;
     isReviewer = false;
 
-    _adopt(await SupabaseService.signInAnonymously());
+    _adopt(await SupabaseService.signInAnonymously().timeout(AppConstants.dbCallTimeout));
     notifyListeners();
   }
 
@@ -311,7 +318,7 @@ class AuthProvider extends ChangeNotifier {
     // The account is gone, so the current token is dead. Sign out locally
     // (best-effort — the server will reject it) and mint a new identity.
     try {
-      await SupabaseService.signOut();
+      await SupabaseService.signOut().timeout(AppConstants.dbCallTimeout);
     } catch (e) {
       debugPrint('Post-deletion sign-out failed (expected): $e');
     }
@@ -331,7 +338,7 @@ class AuthProvider extends ChangeNotifier {
     hasUnfinishedMerge = false;
     isReviewer = false;
 
-    _adopt(await SupabaseService.signInAnonymously());
+    _adopt(await SupabaseService.signInAnonymously().timeout(AppConstants.dbCallTimeout));
     notifyListeners();
   }
 

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../core/constants/app_constants.dart';
 import '../models/user_settings_model.dart';
 import '../services/local_prefs_service.dart';
 import '../services/supabase_service.dart';
@@ -16,7 +17,7 @@ class SettingsProvider extends ChangeNotifier {
   bool mirrorDropPhotos = false;
 
   Future<void> load(String userId) async {
-    settings = await SupabaseService.fetchUserSettings(userId);
+    settings = await SupabaseService.fetchUserSettings(userId).timeout(AppConstants.dbCallTimeout);
     notifyListeners();
   }
 
@@ -54,7 +55,8 @@ class SettingsProvider extends ChangeNotifier {
   String? get displayName => settings?.displayName;
 
   Future<void> setDisplayName(String userId, String name) async {
-    await SupabaseService.updateUserDisplayName(userId: userId, displayName: name);
+    await SupabaseService.updateUserDisplayName(userId: userId, displayName: name)
+        .timeout(AppConstants.dbCallTimeout);
     settings = settings?.copyWith(displayName: name);
     notifyListeners();
   }
@@ -71,7 +73,8 @@ class SettingsProvider extends ChangeNotifier {
       debugPrint('Could not persist the local onboarding flag: $e');
     }
 
-    await SupabaseService.completeOnboarding(userId: userId, answers: answers);
+    await SupabaseService.completeOnboarding(userId: userId, answers: answers)
+        .timeout(AppConstants.dbCallTimeout);
     settings = settings?.copyWith(onboardingCompleted: true, onboardingAnswers: answers);
     notifyListeners();
   }

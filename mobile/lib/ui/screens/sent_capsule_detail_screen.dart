@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/constants/app_constants.dart';
 import '../../core/errors/app_exception.dart';
 import '../../core/haptics/app_haptics.dart';
 import '../../core/theme/app_colors.dart';
@@ -131,7 +132,7 @@ class _SentCapsuleDetailScreenState extends State<SentCapsuleDetailScreen> {
         latitude: _pin.latitude,
         longitude: _pin.longitude,
         city: city,
-      );
+      ).timeout(AppConstants.dbCallTimeout);
 
       if (!mounted) return;
       setState(() {

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../core/constants/app_constants.dart';
 import '../core/errors/app_exception.dart';
 import '../core/utils/share_link_parser.dart';
 import '../models/received_capsule_model.dart';
@@ -72,7 +73,8 @@ class VaultProvider extends ChangeNotifier {
       notifyListeners();
     }
     try {
-      receivedCapsules = await SupabaseService.fetchReceivedCapsules(userId);
+      receivedCapsules =
+          await SupabaseService.fetchReceivedCapsules(userId).timeout(AppConstants.dbCallTimeout);
       unawaited(_backfillCities(userId));
     } finally {
       isLoading = false;
@@ -91,7 +93,7 @@ class VaultProvider extends ChangeNotifier {
         userId: userId,
         capsuleId: c.capsuleId,
         city: city,
-      );
+      ).timeout(AppConstants.dbCallTimeout);
       receivedCapsules[i] = ReceivedCapsuleModel(
         id: c.id,
         capsuleId: c.capsuleId,
@@ -126,7 +128,8 @@ class VaultProvider extends ChangeNotifier {
       throw const CapsuleException('Enter the 6-character code or the full link you received.');
     }
 
-    final capsule = await SupabaseService.fetchCapsuleByShareId(shareId);
+    final capsule =
+        await SupabaseService.fetchCapsuleByShareId(shareId).timeout(AppConstants.dbCallTimeout);
     if (capsule == null) {
       throw const CapsuleException('No memory found with that code.');
     }
@@ -147,7 +150,7 @@ class VaultProvider extends ChangeNotifier {
       encryptionKey: key,
       fromName: link?.fromName,
       capsuleCreatedAt: capsule.createdAt,
-    );
+    ).timeout(AppConstants.dbCallTimeout);
     await load(userId);
 
     // Report a usable link back to the caller so a code-unlockable drop jumps
@@ -182,7 +185,8 @@ class VaultProvider extends ChangeNotifier {
       throw CapsuleReplayException.notOpenYet();
     }
 
-    final capsule = await SupabaseService.fetchCapsuleByShareId(item.shareId);
+    final capsule = await SupabaseService.fetchCapsuleByShareId(item.shareId)
+        .timeout(AppConstants.dbCallTimeout);
     if (capsule == null) {
       throw const CapsuleException('This memory could not be found.');
     }

@@ -164,14 +164,29 @@ class _RadarScreenState extends State<RadarScreen> {
     }
   }
 
+  bool _pollInFlight = false;
+
   void _ensurePendingPoll() {
     _pendingPollTimer ??= Timer.periodic(const Duration(seconds: 3), (_) async {
-      if (!mounted) return;
-      final provider = context.read<CapsuleProvider>();
-      await provider.refreshActiveCapsule();
-      if (provider.activeCapsule?.isPending == false) {
-        _pendingPollTimer?.cancel();
-        _pendingPollTimer = null;
+      // Timer.periodic does not wait for a previous async tick to finish
+      // before scheduling the next one — without this guard, a slow or
+      // hung network call would leave overlapping refreshActiveCapsule
+      // calls piling up every 3 seconds.
+      if (!mounted || _pollInFlight) return;
+      _pollInFlight = true;
+      try {
+        final provider = context.read<CapsuleProvider>();
+        await provider.refreshActiveCapsule();
+        if (provider.activeCapsule?.isPending == false) {
+          _pendingPollTimer?.cancel();
+          _pendingPollTimer = null;
+        }
+      } catch (e) {
+        // Best-effort polling — a transient failure just means the next
+        // tick tries again, rather than crashing out of the timer.
+        debugPrint('Pending-capsule poll failed: $e');
+      } finally {
+        _pollInFlight = false;
       }
     });
   }

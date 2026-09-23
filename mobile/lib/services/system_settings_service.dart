@@ -1,4 +1,5 @@
 import '../core/config/system_config.dart';
+import '../core/constants/app_constants.dart';
 import '../core/constants/supabase_constants.dart';
 import 'supabase_service.dart';
 
@@ -9,7 +10,12 @@ class SystemSettingsService {
 
   static Future<void> fetch() async {
     try {
-      final settings = await SupabaseService.fetchSystemSettings();
+      // This runs inline in MainRouter's bootstrap (see app_router.dart) —
+      // unbounded, a stalled connection here would hang the splash screen
+      // even though a failure is meant to be harmless (SystemConfig keeps
+      // its defaults).
+      final settings =
+          await SupabaseService.fetchSystemSettings().timeout(AppConstants.dbCallTimeout);
       SystemConfig.instance.apply(
         radarZoneRadiusMeters: settings[SupabaseConstants.settingRadarZoneRadius],
         unlockProximityMeters: settings[SupabaseConstants.settingUnlockProximity],

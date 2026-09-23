@@ -133,7 +133,7 @@ class CapsuleProvider extends ChangeNotifier {
             // Only when the sender asked for it. This is the one place the
             // key can reach the server, and it is a per-drop decision.
             codeUnlockKey: allowCodeUnlock ? keyUrlSafe : null,
-          );
+          ).timeout(AppConstants.dbCallTimeout);
           capsuleId = lastReserveResult['capsule_id'] as String;
           shareId = candidate;
           insertedCapsuleId = capsuleId; // row now exists; must clean up on failure
@@ -211,7 +211,8 @@ class CapsuleProvider extends ChangeNotifier {
   /// Call once at app start alongside [resumePendingUploads].
   Future<void> reconcileStuckCapsules(String creatorId) async {
     try {
-      final pendingInDb = await SupabaseService.fetchPendingCapsules(creatorId);
+      final pendingInDb = await SupabaseService.fetchPendingCapsules(creatorId)
+          .timeout(AppConstants.dbCallTimeout);
       if (pendingInDb.isEmpty) return;
 
       final queuedIds = (await UploadQueueService.pending())
@@ -322,7 +323,8 @@ class CapsuleProvider extends ChangeNotifier {
   /// The DB row goes first: if that call fails the local job is left intact, so
   /// the card still offers a retry instead of becoming unrecoverable.
   Future<Map<String, dynamic>> discardUpload(String capsuleId) async {
-    final balances = await SupabaseService.discardCapsule(capsuleId);
+    final balances =
+        await SupabaseService.discardCapsule(capsuleId).timeout(AppConstants.dbCallTimeout);
     await UploadQueueService.remove(capsuleId);
     await UploadQueueService.forgetKey(capsuleId);
     _uploadStates.remove(capsuleId);
@@ -434,7 +436,8 @@ class CapsuleProvider extends ChangeNotifier {
     try {
       final city = await GeocodingService.cityFor(latitude, longitude);
       if (city == null || city.isEmpty) return;
-      await SupabaseService.updateSentCapsuleCity(capsuleId: capsuleId, city: city);
+      await SupabaseService.updateSentCapsuleCity(capsuleId: capsuleId, city: city)
+          .timeout(AppConstants.dbCallTimeout);
       _bumpCapsulesChanged();
     } catch (e) {
       debugPrint('Could not set city for capsule $capsuleId: $e');
@@ -464,7 +467,8 @@ class CapsuleProvider extends ChangeNotifier {
     decryptedPhotos = const [];
     notifyListeners();
     try {
-      final capsule = await SupabaseService.fetchCapsuleByShareId(shareId);
+      final capsule = await SupabaseService.fetchCapsuleByShareId(shareId)
+          .timeout(AppConstants.dbCallTimeout);
       if (capsule == null) {
         throw const CapsuleException('This memory could not be found.');
       }
@@ -487,7 +491,7 @@ class CapsuleProvider extends ChangeNotifier {
         encryptionKey: encryptionKey,
         fromName: fromName,
         capsuleCreatedAt: capsule.createdAt,
-      );
+      ).timeout(AppConstants.dbCallTimeout);
 
       radarPhase = capsule.isUnlocked ? RadarPhase.searching : RadarPhase.waiting;
       notifyListeners();
@@ -503,7 +507,8 @@ class CapsuleProvider extends ChangeNotifier {
   Future<void> refreshActiveCapsule() async {
     final capsule = activeCapsule;
     if (capsule == null) return;
-    final fresh = await SupabaseService.fetchCapsuleByShareId(capsule.shareId);
+    final fresh = await SupabaseService.fetchCapsuleByShareId(capsule.shareId)
+        .timeout(AppConstants.dbCallTimeout);
     if (fresh == null) return;
     activeCapsule = fresh;
     if (!fresh.isPending && radarPhase == RadarPhase.locating) {
@@ -652,7 +657,7 @@ class CapsuleProvider extends ChangeNotifier {
       await SupabaseService.markReceivedCapsuleUnlocked(
         userId: userId,
         capsuleId: capsule.id,
-      );
+      ).timeout(AppConstants.dbCallTimeout);
     }
   }
 

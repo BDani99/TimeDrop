@@ -4,6 +4,7 @@ import 'dart:ui' show lerpDouble;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_radii.dart';
 import '../../core/theme/app_spacing.dart';
@@ -151,7 +152,8 @@ class _HomeScreenState extends State<HomeScreen> with ScrollPaginationMixin {
     unawaited(context.read<VaultProvider>().load(userId, silent: true));
     if (!silent) setState(() => _isLoading = true);
     try {
-      final capsules = await SupabaseService.fetchSentCapsules(userId);
+      final capsules =
+          await SupabaseService.fetchSentCapsules(userId).timeout(AppConstants.dbCallTimeout);
       if (!mounted) return;
       await context.read<SettingsProvider>().load(userId);
       if (!mounted) return;
@@ -174,7 +176,8 @@ class _HomeScreenState extends State<HomeScreen> with ScrollPaginationMixin {
       final city = await GeocodingService.cityFor(c.latitude, c.longitude);
       if (city == null || !mounted) continue;
       try {
-        await SupabaseService.updateSentCapsuleCity(capsuleId: c.id, city: city);
+        await SupabaseService.updateSentCapsuleCity(capsuleId: c.id, city: city)
+            .timeout(AppConstants.dbCallTimeout);
       } catch (_) {
         continue;
       }

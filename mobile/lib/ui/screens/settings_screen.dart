@@ -695,7 +695,7 @@ class _FeedbackSheetState extends State<_FeedbackSheet> {
         message: message,
         appVersion: AppConstants.appVersion,
         platform: Platform.isIOS ? 'ios' : 'android',
-      );
+      ).timeout(AppConstants.dbCallTimeout);
       if (!mounted) return;
       Navigator.of(context).pop();
       AppSnackbar.showSuccess(context, 'Thanks — we\'ll take a look!');

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../core/constants/app_constants.dart';
 import '../models/drop_state_model.dart';
 import '../services/supabase_service.dart';
 
@@ -22,7 +23,7 @@ class DropBalanceProvider extends ChangeNotifier {
     isLoading = true;
     notifyListeners();
     try {
-      state = await SupabaseService.fetchDropState();
+      state = await SupabaseService.fetchDropState().timeout(AppConstants.dbCallTimeout);
       _loaded = true;
     } catch (e) {
       // A balance we cannot read must not block drop creation: the server still
