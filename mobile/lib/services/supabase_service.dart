@@ -7,6 +7,7 @@ import '../models/capsule_model.dart';
 import '../models/drop_state_model.dart';
 import '../models/received_capsule_model.dart';
 import '../models/user_settings_model.dart';
+import 'secure_session_storage.dart';
 
 /// Thin, typed wrapper around the Supabase client. Every method here maps
 /// Supabase's own exceptions into an [AppException] subtype so callers never
@@ -20,6 +21,11 @@ class SupabaseService {
     await Supabase.initialize(
       url: Env.supabaseUrl,
       publishableKey: Env.supabaseAnonKey,
+      authOptions: FlutterAuthClientOptions(
+        localStorage: SecureSessionStorage(
+          persistSessionKey: 'sb-${Uri.parse(Env.supabaseUrl).host.split('.').first}-auth-token',
+        ),
+      ),
     );
   }
 
