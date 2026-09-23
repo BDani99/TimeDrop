@@ -36,10 +36,30 @@ class CameraScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: PermissionGate(
-        requestPermission: _requestPermissions,
-        deniedMessage: 'Camera and microphone access are required to record a memory.',
-        child: const _CameraBody(),
+      body: Stack(
+        children: [
+          PermissionGate(
+            requestPermission: _requestPermissions,
+            deniedMessage: 'Camera and microphone access are required to record a memory.',
+            child: const _CameraBody(),
+          ),
+          // A persistent close button, deliberately a sibling of
+          // PermissionGate (not inside its child) so it survives the
+          // pending/denied states too — without it, a denied-permission
+          // screen, or on iOS any state at all (SpringPageRoute has no
+          // edge-swipe-back), is a dead end the user can only escape by
+          // force-quitting the app. Top-right so it never collides with the
+          // watermark, which owns top-left once recording is live.
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topRight,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -325,6 +345,7 @@ class _CameraBodyState extends State<_CameraBody> with TickerProviderStateMixin 
                 left: AppSpacing.md,
                 child: _Watermark(position: _position),
               ),
+
 
               // Bottom band: hint + record button. Flash sits to the left of
               // the record, camera flip to the right (always visible when
