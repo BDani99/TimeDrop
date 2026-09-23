@@ -92,6 +92,21 @@ class MediaCacheService {
     if (await first.exists()) return first.readAsBytes();
     return null;
   }
+
+  /// Wipes every cached memory's decrypted content from disk.
+  ///
+  /// Nothing ever calls this on its own — a viewed memory's plaintext sits
+  /// here indefinitely by design, so the Vault can replay it offline without
+  /// re-fetching/re-decrypting. That's fine while the account exists, but
+  /// [AuthProvider.deleteAccount] must call this: otherwise a user who
+  /// deletes their account for privacy still has every memory they ever
+  /// opened sitting in cleartext on the device afterward, which defeats the
+  /// point of asking to be deleted.
+  static Future<void> clearAll() async {
+    _root ??= await getApplicationSupportDirectory();
+    final dir = Directory('${_root!.path}/capsules');
+    if (await dir.exists()) await dir.delete(recursive: true);
+  }
 }
 
 class CachedCapsule {

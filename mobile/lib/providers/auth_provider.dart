@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 import '../core/constants/app_constants.dart';
 import '../core/errors/app_exception.dart';
 import '../services/local_prefs_service.dart';
+import '../services/media_cache_service.dart';
 import '../services/supabase_service.dart';
 
 enum AuthStatus { unknown, anonymous, linked }
@@ -313,6 +314,17 @@ class AuthProvider extends ChangeNotifier {
       await SupabaseService.signOut();
     } catch (e) {
       debugPrint('Post-deletion sign-out failed (expected): $e');
+    }
+
+    // The server-side rows and blobs are gone, but every memory this device
+    // ever decrypted still sits in cleartext in the local media cache (see
+    // MediaCacheService doc). Deleting the account is a privacy request;
+    // leaving that cache behind would quietly ignore it. Best-effort — a
+    // failure here must not block the rest of account deletion.
+    try {
+      await MediaCacheService.clearAll();
+    } catch (e) {
+      debugPrint('Could not clear the local media cache post-deletion: $e');
     }
 
     await LocalPrefsService.clearPendingMerge();
