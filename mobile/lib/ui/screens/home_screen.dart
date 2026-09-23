@@ -53,6 +53,11 @@ class _HomeScreenState extends State<HomeScreen> with ScrollPaginationMixin {
   CapsuleProvider? _capsuleProvider;
   int _lastChangeTick = 0;
 
+  /// Capsule ids with a discard confirmation/request in flight — blocks a
+  /// double-tap from opening (or acting on) a second confirmation for the
+  /// same capsule while the first is still being processed.
+  final Set<String> _discarding = {};
+
   final _scrollController = ScrollController();
   bool _snapping = false;
 
@@ -206,13 +211,25 @@ class _HomeScreenState extends State<HomeScreen> with ScrollPaginationMixin {
       onRetry: isInFlight
           ? () => context.read<CapsuleProvider>().retryUpload(capsule.id)
           : null,
-      onDiscard:
-          capsule.status == 'failed' ? () => _confirmDiscard(capsule) : null,
+      onDiscard: capsule.status == 'failed' && !_discarding.contains(capsule.id)
+          ? () => _confirmDiscard(capsule)
+          : null,
       onTap: isInFlight ? null : () => _openDetail(capsule),
     );
   }
 
   Future<void> _confirmDiscard(CapsuleModel capsule) async {
+    if (_discarding.contains(capsule.id)) return;
+    setState(() => _discarding.add(capsule.id));
+    try {
+      await _confirmDiscardImpl(capsule);
+    } finally {
+      _discarding.remove(capsule.id);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _confirmDiscardImpl(CapsuleModel capsule) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
