@@ -7,10 +7,10 @@ class SplashScreen extends StatelessWidget {
   const SplashScreen({super.key});
 
   // Median edge colour sampled from assets/icon/splash.jpg.
-  static const _bgColor = Color(0xFFF1E5D8);
+  static const backgroundColor = Color(0xFFF1E5D8);
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(backgroundColor: _bgColor);
+    return const Scaffold(backgroundColor: backgroundColor);
   }
 }

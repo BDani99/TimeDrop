@@ -5,6 +5,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 
+import '../core/constants/app_constants.dart';
 import '../core/errors/app_exception.dart';
 import '../services/local_prefs_service.dart';
 import '../services/supabase_service.dart';
@@ -50,7 +51,12 @@ class AuthProvider extends ChangeNotifier {
     if (existing != null) {
       _adopt(existing);
     } else {
-      _adopt(await SupabaseService.signInAnonymously());
+      // Every screen assumes a session exists before it renders (see class
+      // doc), so a stalled connection here — the normal operating
+      // environment for an app whose core loop is "walk to a GPS location" —
+      // must not hang the splash screen forever with no way out. Bounding it
+      // turns that into a catchable failure the caller can retry.
+      _adopt(await SupabaseService.signInAnonymously().timeout(AppConstants.dbCallTimeout));
     }
 
     hasUnfinishedMerge = await LocalPrefsService.getPendingMerge() != null;

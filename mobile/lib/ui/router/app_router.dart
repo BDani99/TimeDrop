@@ -4,6 +4,8 @@ import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/theme/app_spacing.dart';
+import '../../core/theme/app_typography.dart';
 import '../../core/utils/share_link_parser.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/capsule_provider.dart';
@@ -19,6 +21,7 @@ import '../screens/onboarding/onboarding_screen.dart';
 import '../screens/splash_screen.dart';
 import '../widgets/app_snackbar.dart';
 import '../widgets/navigation/spring_page_route.dart';
+import '../widgets/primary_button.dart';
 
 /// Splash → bootstrap (auth + settings + system config + drop balance)
 /// → GiftReceivedScreen if a share link brought us here, else OnboardingScreen
@@ -44,6 +47,15 @@ class MainRouter extends StatefulWidget {
 class MainRouterState extends State<MainRouter> {
   bool _bootstrapped = false;
   bool _onboardingCompleted = false;
+
+  /// Set when bootstrap failed to establish ANY session (e.g. a timed-out
+  /// anonymous sign-in on a stalled connection). Every screen past this
+  /// router assumes a non-null userId, so this must not fall through to
+  /// Home/Onboarding — that would trade an honest retry screen for a crash
+  /// two screens later. Unset (and retried) whenever bootstrap did establish
+  /// a session, even if some later, non-critical step in the same pass
+  /// failed.
+  bool _bootstrapFailed = false;
 
   /// A complete link, ready to open.
   ShareLinkModel? _pendingLink;
@@ -128,6 +140,10 @@ class MainRouterState extends State<MainRouter> {
   }
 
   Future<void> _bootstrap() async {
+    // Reset a previous failure when this is a retry (mounted, mid-build
+    // lifecycle); on the very first call from initState there is nothing to
+    // reset and no tree built yet to rebuild.
+    if (mounted && _bootstrapFailed) setState(() => _bootstrapFailed = false);
     final auth = context.read<AuthProvider>();
     final settings = context.read<SettingsProvider>();
     final payment = context.read<PaymentProvider>();
@@ -192,6 +208,16 @@ class MainRouterState extends State<MainRouter> {
       });
     } catch (e) {
       if (!mounted) return;
+      if (auth.userId == null) {
+        // No session at all (e.g. a timed-out anonymous sign-in). Every
+        // screen past this router assumes userId != null, so falling
+        // through to Home/Onboarding here would trade this honest retry
+        // screen for a crash two screens later.
+        setState(() => _bootstrapFailed = true);
+        return;
+      }
+      // A session exists; some later, non-critical step failed. Surface it
+      // and proceed — the invariant screens rely on is still satisfied.
       AppSnackbar.showError(context, e);
       setState(() => _bootstrapped = true);
     }
@@ -229,6 +255,9 @@ class MainRouterState extends State<MainRouter> {
 
   @override
   Widget build(BuildContext context) {
+    if (_bootstrapFailed) {
+      return _BootstrapFailedScreen(onRetry: _bootstrap);
+    }
     if (!_bootstrapped) return const SplashScreen();
 
     final link = _pendingLink;
@@ -254,6 +283,40 @@ class MainRouterState extends State<MainRouter> {
 
     if (!_onboardingCompleted) return const OnboardingScreen();
     return const HomeScreen();
+  }
+}
+
+/// Shown in place of [SplashScreen] when bootstrap could not establish any
+/// session at all (e.g. a timed-out anonymous sign-in on a stalled
+/// connection). Mirrors [PermissionGate]'s denied state: an explanation plus
+/// a retry, rather than leaving the user staring at a blank splash forever.
+class _BootstrapFailedScreen extends StatelessWidget {
+  const _BootstrapFailedScreen({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: SplashScreen.backgroundColor,
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.containerMargin),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                "Couldn't connect. Check your connection and try again.",
+                style: AppTypography.bodyMd,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppSpacing.md),
+              PrimaryButton(label: 'Try again', onPressed: onRetry),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
