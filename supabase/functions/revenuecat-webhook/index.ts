@@ -167,6 +167,15 @@ Deno.serve(async (req: Request) => {
     await audit(admin, userId, 'rc_webhook_unknown_product', { eventId, eventType, productId });
   }
 
+  if (resolved === 'user_not_found') {
+    // app_user_id/aliases parsed as a well-formed UUID but does not exist in
+    // auth.users (stale sandbox data, a deleted account, cross-environment
+    // leakage). rc_apply_event already short-circuited before touching
+    // drop_balances, so nothing was applied — a retry cannot help, but make
+    // it findable the same way an unknown product is.
+    await audit(admin, null, 'rc_webhook_user_not_found', { eventId, eventType, productId, userId });
+  }
+
   return json({ status: resolved });
 });
 
