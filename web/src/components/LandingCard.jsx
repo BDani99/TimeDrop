@@ -27,7 +27,7 @@ export default function LandingCard({ shareId, fromName, encryptionKey }) {
       }}
     >
       <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-[#ff8264] to-[#a33d25] shadow-lg shadow-[#a33d25]/30">
-        <span className="text-2xl">🔒</span>
+        <span className="text-2xl" aria-hidden="true">🔒</span>
       </div>
 
       <h1 className="mb-3 font-[var(--font-display)] text-3xl font-bold leading-tight text-[var(--color-on-surface)] sm:text-4xl">
