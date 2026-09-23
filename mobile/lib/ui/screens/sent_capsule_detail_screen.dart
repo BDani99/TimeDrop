@@ -225,10 +225,16 @@ class _SentCapsuleDetailScreenState extends State<SentCapsuleDetailScreen> {
                 IconButton(
                   icon: const Icon(Icons.copy, color: AppColors.primary),
                   onPressed: () async {
-                    await ClipboardService.copyToClipboard(_capsule.shareId);
-                    await AppHaptics.medium();
-                    if (context.mounted) {
-                      AppSnackbar.showMessage(context, 'Code copied!');
+                    try {
+                      await ClipboardService.copyToClipboard(_capsule.shareId);
+                      await AppHaptics.medium();
+                      if (context.mounted) {
+                        AppSnackbar.showMessage(context, 'Code copied!');
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        AppSnackbar.showError(context, e);
+                      }
                     }
                   },
                 ),
