@@ -345,6 +345,8 @@ class _VideoStage extends StatelessWidget {
                     left: AppSpacing.md,
                     child: WatermarkStamp(
                       timestamp: capturedAt!,
+                      latitude: latitude,
+                      longitude: longitude,
                     ),
                   ),
               ],
@@ -449,7 +451,11 @@ class _UnifiedGalleryState extends State<_UnifiedGallery> {
                   Positioned(
                     top: AppSpacing.sm,
                     left: AppSpacing.md,
-                    child: WatermarkStamp(timestamp: widget.capturedAt!),
+                    child: WatermarkStamp(
+                      timestamp: widget.capturedAt!,
+                      latitude: widget.latitude,
+                      longitude: widget.longitude,
+                    ),
                   ),
               ],
             );
@@ -566,6 +572,8 @@ class _VideoReplayPageState extends State<_VideoReplayPage> {
                       left: AppSpacing.md,
                       child: WatermarkStamp(
                         timestamp: widget.capturedAt!,
+                        latitude: widget.latitude,
+                        longitude: widget.longitude,
                       ),
                     ),
                   if (!isPlaying)

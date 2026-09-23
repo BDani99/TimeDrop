@@ -522,6 +522,8 @@ class _Watermark extends StatelessWidget {
   Widget build(BuildContext context) {
     return WatermarkStamp(
       timestamp: DateTime.now(),
+      latitude: position?.latitude,
+      longitude: position?.longitude,
     );
   }
 }
