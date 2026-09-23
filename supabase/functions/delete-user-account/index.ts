@@ -115,7 +115,9 @@ Deno.serve(async (req: Request) => {
       detail: deleteError.message,
       warnings,
     });
-    return json(req, { error: 'Could not delete your account', detail: deleteError.message }, 500);
+    // The real reason is logged server-side and in the audit row above —
+    // the client only needs to know it failed and can retry.
+    return json(req, { error: 'Could not delete your account' }, 500);
   }
 
   if (warnings.length > 0) {

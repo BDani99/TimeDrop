@@ -211,17 +211,20 @@ Deno.serve(async (req: Request) => {
         source: anonymousUserId,
         detail: deleteError.message,
       });
-      return json(req, { merged: true, warnings: [`deleteUser: ${deleteError.message}`] });
+      return json(req, { merged: true, warnings: ['source account could not be fully removed'] });
     }
 
     await audit(admin, targetUserId, 'anonymous_merge', { source: anonymousUserId });
     return json(req, { merged: true });
   } catch (error) {
+    // Logged with full detail server-side (and in the audit row) — the
+    // client only needs to know the merge failed and that it's safe to retry
+    // (every step above is idempotent).
     console.error('merge-anonymous-account failed', error);
     await audit(admin, targetUserId, 'anonymous_merge_failed', {
       source: anonymousUserId,
       detail: String(error),
     });
-    return json(req, { error: 'Merge failed', detail: String(error) }, 500);
+    return json(req, { error: 'Merge failed' }, 500);
   }
 });
