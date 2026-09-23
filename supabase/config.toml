@@ -17,3 +17,11 @@ verify_jwt = true
 
 [functions.delete-user-account]
 verify_jwt = true
+
+# Same reasoning as revenuecat-webhook above: pg_cron/pg_net calls this with
+# PURGE_JOB_SECRET in the Authorization header, not a Supabase JWT. Without
+# this entry the gateway falls back to the verify_jwt = true default and
+# rejects every invocation with a 401 before the function's own secret check
+# ever runs — silently disabling the free-drop retention purge.
+[functions.purge-expired-capsules]
+verify_jwt = false
