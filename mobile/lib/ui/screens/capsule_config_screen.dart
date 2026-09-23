@@ -22,6 +22,7 @@ import '../../providers/capsule_provider.dart';
 import '../../providers/drop_balance_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../core/utils/date_format_helper.dart';
+import '../../core/utils/name_format.dart';
 import '../../services/geolocation_service.dart';
 import '../../services/photo_processing_service.dart';
 import '../widgets/app_snackbar.dart';
@@ -557,6 +558,7 @@ class _CapsuleConfigScreenState extends State<CapsuleConfigScreen> {
             const SizedBox(height: AppSpacing.sm),
             TextField(
               controller: _nameController,
+              maxLength: NameFormat.maxLength,
               textCapitalization: TextCapitalization.words,
               decoration: const InputDecoration(hintText: 'So they know who it\'s from'),
             ),
